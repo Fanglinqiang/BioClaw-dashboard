@@ -1,23 +1,49 @@
 # BioClaw 🧬
 
-**Your AI biology research assistant on WhatsApp.** Run BLAST searches, analyze sequences, process genomic data — all from your phone.
+**A personal AI-powered biology research assistant on WhatsApp.**
 
-Built on [NanoClaw](https://github.com/qwibitai/nanoclaw) + Claude Agent SDK. Agents run in isolated containers pre-loaded with bioinformatics tools.
+BioClaw brings bioinformatics tools to your fingertips — run BLAST searches, visualize protein structures with PyMOL, analyze genomic data, and search literature, all by messaging on WhatsApp. Designed for researchers who want quick access to computational biology workflows without switching to a terminal.
+
+Built on [NanoClaw](https://github.com/qwibitai/nanoclaw) + Claude Agent SDK. Each conversation runs in an isolated Docker container pre-loaded with bioinformatics tools.
+
+## Why BioClaw?
+
+As a biology researcher, you often need to run quick analyses — check a sequence, look up a protein structure, or search for related papers. These tasks usually require SSH-ing into a server, setting up environments, and writing scripts. BioClaw lets you do all of this from a WhatsApp message, making computational biology accessible anywhere, anytime.
+
+## Screenshots
+
+**Protein structure rendering** — Load PDB 1UBQ (Ubiquitin) as a high-res rainbow cartoon:
+
+<img src="docs/images/pymol-ubiquitin-cartoon.png" width="600" />
+
+**Hydrogen bond analysis** — Visualize hydrogen bonds between a ligand and protein in PDB 1M17:
+
+<img src="docs/images/pymol-hydrogen-bonds-en.png" width="600" />
+
+**Binding site visualization** — Show residues within 5Å of ligand AQ4 in PDB 1M17:
+
+<img src="docs/images/pymol-binding-site.png" width="600" />
+
+**Structure alignment** — Align 1UBQ and 1UBI, colored cyan and magenta (RMSD = 0.101 Å):
+
+<img src="docs/images/pymol-structure-alignment.png" width="600" />
 
 ## What It Does
 
-Message `@Bio` on WhatsApp and it can:
+Message `@Bioclaw` in a WhatsApp group and it can:
 
 ```
-@Bio BLAST this sequence against nr: ATGCGATCGATCG...
-@Bio analyze the FastQC report in my workspace
-@Bio find all ORFs in sequence.fasta and annotate them
-@Bio run differential expression analysis on counts.csv
-@Bio search PubMed for recent papers on CRISPR delivery methods
-@Bio align these reads to the human reference genome
-@Bio visualize the gene expression heatmap from my RNA-seq data
-@Bio what's the 3D structure of protein P53? fetch from PDB
+@Bioclaw BLAST this sequence against nr: ATGCGATCGATCG...
+@Bioclaw analyze the FastQC report in my workspace
+@Bioclaw find all ORFs in sequence.fasta and annotate them
+@Bioclaw run differential expression analysis on counts.csv
+@Bioclaw search PubMed for recent papers on CRISPR delivery methods
+@Bioclaw align these reads to the human reference genome
+@Bioclaw render the 3D structure of protein P53 from PDB and send me the image
+@Bioclaw visualize gene expression heatmap from my RNA-seq data
 ```
+
+The agent can also **send images** back — PyMOL protein renders, matplotlib plots, and more are delivered directly to the chat.
 
 ## Biology Tools in Container
 
@@ -31,6 +57,7 @@ Message `@Bio` on WhatsApp and it can:
 | **minimap2** | Long-read and assembly alignment |
 | **FastQC** | Sequencing data quality control |
 | **seqtk** | FASTA/FASTQ toolkit |
+| **PyMOL** | Protein structure visualization and rendering (headless) |
 
 ### Python Libraries
 | Library | What it does |
@@ -46,75 +73,109 @@ Message `@Bio` on WhatsApp and it can:
 
 ## Quick Start
 
+### Prerequisites
+
+- macOS or Linux
+- Node.js 20+
+- Docker Desktop
+- An Anthropic API key
+
+### Setup
+
 ```bash
-git clone https://github.com/YOUR_USERNAME/BioClaw.git
+git clone https://github.com/Runchuan-BU/BioClaw.git
 cd BioClaw
-claude
+npm install
 ```
 
-Then run `/setup`. Claude Code handles everything: dependencies, WhatsApp auth, container build with bio tools.
+Create a `.env` file:
+
+```bash
+echo 'ANTHROPIC_API_KEY=your-key-here' > .env
+```
+
+Build the Docker container (includes all bio tools):
+
+```bash
+docker build -t bioclaw-agent:latest container/
+```
+
+Authenticate with WhatsApp (one-time):
+
+```bash
+npx tsx src/whatsapp-auth.ts
+```
+
+Register a WhatsApp group for the bot to respond in:
+
+```bash
+npx tsx scripts/manage-groups.ts register
+```
+
+Start BioClaw:
+
+```bash
+npx tsx src/index.ts
+```
+
+### Group Management
+
+```bash
+npx tsx scripts/manage-groups.ts list        # Show registered groups
+npx tsx scripts/manage-groups.ts available    # Show all discovered groups
+npx tsx scripts/manage-groups.ts register     # Register a new group (interactive)
+npx tsx scripts/manage-groups.ts remove <jid> # Remove a group
+```
 
 ## How It Works
 
 ```
-WhatsApp (@Bio) --> SQLite --> Polling loop --> Container (Claude + Bio Tools) --> Response
+WhatsApp (@Bioclaw) → SQLite → Polling Loop → Docker Container (Claude + Bio Tools) → Response
+                                                     ↓
+                                              IPC (text + images) → WhatsApp
 ```
 
-Single Node.js process. Each group gets its own isolated container with biology tools pre-installed. Per-group memory and file storage.
+A single Node.js process orchestrates everything. When a message triggers the bot, it spins up an isolated Docker container with Claude and all bioinformatics tools pre-installed. The agent processes the request and sends results back — including rendered images — through an IPC file system.
+
+Each group gets its own container, memory, and file storage. Groups are fully isolated from each other.
 
 ## Configuration
 
-Default trigger word is `@Bio`. Change it:
-```
+Default trigger word is `@Bioclaw`. Change it:
+
+```bash
 export ASSISTANT_NAME=MyLabBot
 ```
 
-### Group Examples
+### Use Cases
 
-- **Lab Group**: Mount your lab's shared sequencing data directory
-- **Journal Club**: Schedule weekly PubMed searches for new papers
+- **Lab Group**: Mount your lab's shared sequencing data directory for collaborative analysis
+- **Journal Club**: Schedule weekly PubMed searches for new papers in your field
 - **Personal**: Private analysis workspace with full project access
 
 ## Project Structure
 
 ```
 BioClaw/
-├── src/                    # Node.js orchestrator
-│   ├── index.ts           # Main loop
-│   ├── channels/whatsapp.ts
-│   ├── container-runner.ts
-│   └── ...
+├── src/                        # Node.js orchestrator
+│   ├── index.ts               # Main loop & message routing
+│   ├── channels/whatsapp.ts   # WhatsApp connection (Baileys)
+│   ├── container-runner.ts    # Docker container management
+│   ├── ipc.ts                 # Inter-process communication
+│   └── db.ts                  # SQLite database
 ├── container/
-│   ├── Dockerfile         # Agent image with bio tools
-│   ├── build.sh
-│   └── agent-runner/      # Claude Agent SDK runner
+│   ├── Dockerfile             # Agent image with bio tools
+│   └── agent-runner/          # Claude Agent SDK + MCP tools
+├── scripts/
+│   └── manage-groups.ts       # Group management CLI
 ├── groups/
-│   ├── main/CLAUDE.md     # Main channel memory
-│   └── global/CLAUDE.md   # Shared memory
-└── docs/
+│   └── global/CLAUDE.md       # Shared agent memory
+└── store/                     # Auth state & database (gitignored)
 ```
-
-## Requirements
-
-- macOS or Linux
-- Node.js 20+
-- Claude Code (`npm install -g @anthropic-ai/claude-code`)
-- Apple Container (macOS) or Docker
-
-## Customizing
-
-Tell Claude Code what you want:
-
-- "Add support for AlphaFold structure prediction"
-- "Mount my lab's NAS at /workspace/data"
-- "Schedule a daily PubMed alert for 'single-cell spatial transcriptomics'"
-- "Add Telegram support instead of WhatsApp"
-
-The codebase is small enough that Claude can safely modify it.
 
 ## Acknowledgments
 
-Inspired by and built on [NanoClaw](https://github.com/qwibitai/nanoclaw) by [@qwibitai](https://github.com/qwibitai). MIT License.
+Built on [NanoClaw](https://github.com/qwibitai/nanoclaw) by [@qwibitai](https://github.com/qwibitai).
 
 ## License
 
