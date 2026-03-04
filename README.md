@@ -1,5 +1,5 @@
 <div align="center">
-<img src="bioclaw_logo.jpg" width="200">
+<img src="bioclaw_logo1.jpg" width="200">
 
 
 # BioClaw
