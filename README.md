@@ -6,6 +6,8 @@
 
 ### AI-Powered Bioinformatics Research Assistant on WhatsApp
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/Runchuan-BU/BioClaw)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Runchuan-BU/BioClaw/blob/main/LICENSE)
 [![Paper](https://img.shields.io/badge/bioRxiv-STELLA-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.07.01.662467v2)
@@ -22,10 +24,10 @@ Built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) architecture with 
 ## Contents
 
 - [Overview](#overview)
+- [Quick Start](#quick-start)
 - [Demo Examples](#demo-examples)
 - [System Architecture](#system-architecture)
 - [Included Tools](#included-tools)
-- [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
 - [Citation](#citation)
 - [License](#license)
@@ -44,6 +46,51 @@ The rapid growth of biomedical data, tools, and literature has created a fragmen
 - **Workspace Management** — Triage files, recommend analysis steps, and manage shared group workspaces
 
 Results — including images, plots, and structured reports — are delivered directly back to the chat.
+
+## Quick Start
+
+### Prerequisites
+
+- macOS or Linux
+- Node.js 20+
+- Docker Desktop
+- Anthropic API key
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Runchuan-BU/BioClaw.git
+cd BioClaw
+
+# Install dependencies
+npm install
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your Anthropic API key and WhatsApp credentials
+
+# Start BioClaw
+npm start
+```
+
+### Usage
+
+In any WhatsApp group where BioClaw is connected, simply message:
+
+```
+@Bioclaw <your request>
+```
+
+## Second Quick Start
+
+Just send the message to OpenClaw:
+
+```text
+install https://github.com/Runchuan-BU/BioClaw
+```
+
+See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use demo prompts with expected outputs.
 
 ## Demo Examples
 
@@ -182,51 +229,6 @@ The bioinformatics tool suite and domain-specific skills — including sequence 
 | **PyDESeq2** | Differential expression analysis |
 | **scanpy** | Single-cell RNA-seq analysis |
 | **pysam** | SAM/BAM file access from Python |
-
-## Quick Start
-
-### Prerequisites
-
-- macOS or Linux
-- Node.js 20+
-- Docker Desktop
-- Anthropic API key
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/Runchuan-BU/BioClaw.git
-cd BioClaw
-
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Anthropic API key and WhatsApp credentials
-
-# Start BioClaw
-npm start
-```
-
-### Usage
-
-In any WhatsApp group where BioClaw is connected, simply message:
-
-```
-@Bioclaw <your request>
-```
-
-## Second Quick Start
-
-Just send the message to OpenClaw:
-
-```text
-install https://github.com/Runchuan-BU/BioClaw
-```
-
-See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use demo prompts with expected outputs.
 
 ## Project Structure
 
