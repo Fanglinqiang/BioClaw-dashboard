@@ -3,7 +3,7 @@
 
 # BioClaw
 
-### 面向 WhatsApp 的 AI 生物信息学研究助手
+### 在聊天里跑生物信息学分析的 AI 助手
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
