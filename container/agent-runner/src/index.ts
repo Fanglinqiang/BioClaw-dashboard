@@ -91,10 +91,19 @@ interface OpenAIChatMessage {
 
 interface OpenAIChatResponse {
   choices?: Array<{
-    message?: OpenAIChatMessage;
+    message?: OpenAIChatMessage & { content?: string | Array<{ type?: string; text?: string }> | null };
     finish_reason?: string | null;
   }>;
   error?: { message?: string };
+}
+
+/** Normalize API content (string or array of blocks) to string. */
+function normalizeContent(
+  content: string | Array<{ type?: string; text?: string }> | null | undefined,
+): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map((c) => c.text || '').join('');
+  return '';
 }
 
 /**
@@ -903,14 +912,15 @@ async function runOpenAICompatibleConversation(
 
     messages.push({
       role: 'assistant',
-      content: assistantMessage.content || '',
+      content: normalizeContent(assistantMessage.content),
       tool_calls: assistantMessage.tool_calls,
     });
 
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+      const textResult = normalizeContent(assistantMessage.content);
       writeOutput({
         status: 'success',
-        result: assistantMessage.content || '',
+        result: textResult,
         newSessionId,
       });
       return { newSessionId, closedDuringQuery: false, messages };

@@ -93,14 +93,18 @@ Create a `.env` file in the project root and choose **one** of the following set
 ANTHROPIC_API_KEY=your_anthropic_key
 ```
 
-**Option B — OpenRouter**
+**Option B — OpenRouter** (Gemini, DeepSeek, Claude, GPT, and more)
 
 ```bash
 MODEL_PROVIDER=openrouter
-OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_API_KEY=sk-or-v1-your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=openai/gpt-5.4
+OPENROUTER_MODEL=deepseek/deepseek-chat-v3.1
 ```
+
+Popular model IDs: `deepseek/deepseek-chat-v3.1`, `google/gemini-2.5-flash`, `anthropic/claude-3.5-sonnet`. Full list: [openrouter.ai/models](https://openrouter.ai/models)
+
+**Note:** Use models that support [tool calling](https://openrouter.ai/models?supported_parameters=tools) (e.g. DeepSeek, Gemini, Claude). Session history is preserved within a container session; after idle timeout, a new container starts with a fresh context.
 
 **Generic OpenAI-compatible setup**
 

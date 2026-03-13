@@ -72,14 +72,18 @@ BioClaw 现在支持两条模型路径：
 ANTHROPIC_API_KEY=your_anthropic_key
 ```
 
-**方案 B：OpenRouter**
+**方案 B：OpenRouter**（支持 Gemini、DeepSeek、Claude、GPT 等）
 
 ```bash
 MODEL_PROVIDER=openrouter
-OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_API_KEY=sk-or-v1-your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=openai/gpt-5.4
+OPENROUTER_MODEL=deepseek/deepseek-chat-v3.1
 ```
+
+常用模型 ID：`deepseek/deepseek-chat-v3.1`、`google/gemini-2.5-flash`、`anthropic/claude-3.5-sonnet`。完整列表：[openrouter.ai/models](https://openrouter.ai/models)
+
+**注意**：请选用支持 [tool calling](https://openrouter.ai/models?supported_parameters=tools) 的模型（如 DeepSeek、Gemini、Claude）。会话历史在单次容器运行期间保留；空闲超时后新容器会以全新上下文启动。
 
 **通用 OpenAI-compatible 配置**
 
