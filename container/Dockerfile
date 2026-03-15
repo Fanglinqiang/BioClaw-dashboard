@@ -68,6 +68,12 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     requests \
     multiqc
 
+# Install AutoResearchClaw and LiteLLM (OpenAI-compat proxy for Anthropic API)
+RUN pip3 install --no-cache-dir --break-system-packages \
+    litellm \
+    pyyaml \
+    git+https://github.com/aiming-lab/AutoResearchClaw.git
+
 # Install PyMOL (headless) via apt
 RUN apt-get update && apt-get install -y \
     pymol \
