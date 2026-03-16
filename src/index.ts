@@ -57,7 +57,6 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
-<<<<<<< HEAD
 let whatsapp: WhatsAppChannel | undefined;
 let wecom: WeComChannel | null = null;
 const channels: Channel[] = [];
