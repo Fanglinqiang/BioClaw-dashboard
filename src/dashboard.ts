@@ -493,6 +493,7 @@ async function handleApi(
       }
 
       let hadTextEvent = false;
+      const sentTexts = new Set<string>();
       await runContainerAgent(
         group,
         {
@@ -512,6 +513,12 @@ async function handleApi(
         (event: ContainerEvent) => {
           if (event.type === 'text' || (event.type === 'tool_call' && event.tool?.endsWith('send_message'))) {
             hadTextEvent = true;
+          }
+          // Deduplicate: skip send_message tool call if identical text was already sent as a text event, or vice versa
+          const eventText = event.type === 'text' ? event.text : (event.type === 'tool_call' && event.tool?.endsWith('send_message') ? String((event.input as any)?.text || '') : '');
+          if (eventText) {
+            if (sentTexts.has(eventText)) return; // skip duplicate
+            sentTexts.add(eventText);
           }
           sendEvent(event);
         },

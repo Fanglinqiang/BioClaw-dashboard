@@ -12,9 +12,19 @@ import {
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ONLY,
   TRIGGER_PATTERN,
+  WECOM_BOT_ID,
+  WECOM_SECRET,
+  WECOM2_BOT_ID,
+  WECOM2_SECRET,
+  WECOM3_BOT_ID,
+  WECOM3_SECRET,
+  WECOM_CORP_ID,
+  WECOM_CORP_SECRET,
+  WECOM_AGENT_ID,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { TelegramChannel } from './channels/telegram.js';
+import { WeComChannel } from './channels/wecom.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -105,7 +115,7 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:')))
+    .filter((c) => c.jid !== '__group_sync__' && (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:') || c.jid.startsWith('wc')))
     .map((c) => ({
       jid: c.jid,
       name: c.name,
@@ -488,6 +498,24 @@ async function main(): Promise<void> {
     const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
     channels.push(telegram);
     await telegram.connect();
+  }
+
+  if (WECOM_BOT_ID && WECOM_SECRET) {
+    const wecom = new WeComChannel(WECOM_BOT_ID, WECOM_SECRET, { ...channelOpts, corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
+    channels.push(wecom);
+    await wecom.connect();
+  }
+
+  if (WECOM2_BOT_ID && WECOM2_SECRET) {
+    const wecom2 = new WeComChannel(WECOM2_BOT_ID, WECOM2_SECRET, { ...channelOpts, jidPrefix: 'wc2:', corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
+    channels.push(wecom2);
+    await wecom2.connect();
+  }
+
+  if (WECOM3_BOT_ID && WECOM3_SECRET) {
+    const wecom3 = new WeComChannel(WECOM3_BOT_ID, WECOM3_SECRET, { ...channelOpts, jidPrefix: 'wc3:', corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
+    channels.push(wecom3);
+    await wecom3.connect();
   }
 
   // Start subsystems (independently of connection handler)
