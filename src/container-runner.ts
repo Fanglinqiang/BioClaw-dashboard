@@ -501,6 +501,15 @@ export async function runContainerAgent(
       fs.writeFileSync(logFile, logLines.join('\n'));
       logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
 
+      // Warn on any stdout that falls outside the structured OUTPUT markers
+      // (e.g. Python print() calls). Silently dropping these hides script warnings.
+      const orphanStdout = stdout
+        .replace(/---BIOCLAW_OUTPUT_START---[\s\S]*?---BIOCLAW_OUTPUT_END---/g, '')
+        .trim();
+      if (orphanStdout && !isError) {
+        logger.warn({ group: group.name, logFile }, `Container unstructured output:\n${orphanStdout}`);
+      }
+
       if (code !== 0) {
         logger.error(
           {
