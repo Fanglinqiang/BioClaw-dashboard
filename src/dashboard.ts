@@ -492,6 +492,7 @@ async function handleApi(
         }
       }
 
+      let hadTextEvent = false;
       await runContainerAgent(
         group,
         {
@@ -503,11 +504,15 @@ async function handleApi(
         },
         () => { /* noop — no GroupQueue tracking needed for dashboard */ },
         async (output) => {
-          if (output.result && output.result !== 'No response requested.') sendEvent({ type: 'text', text: output.result });
+          // Only send output.result if no text/send_message events were streamed (avoid duplication)
+          if (output.result && output.result !== 'No response requested.' && !hadTextEvent) sendEvent({ type: 'text', text: output.result });
           if (output.newSessionId) sendEvent({ type: 'session', sessionId: output.newSessionId });
           if (output.status === 'error' && output.error) sendEvent({ type: 'error', message: output.error });
         },
         (event: ContainerEvent) => {
+          if (event.type === 'text' || (event.type === 'tool_call' && event.tool?.endsWith('send_message'))) {
+            hadTextEvent = true;
+          }
           sendEvent(event);
         },
       );

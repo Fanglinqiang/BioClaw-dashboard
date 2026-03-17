@@ -1536,6 +1536,7 @@ function sendChatMessage() {
     var reader = response.body.getReader();
     var decoder = new TextDecoder();
     var buf = '';
+    var _sendMessageTexts = [];
 
     function readChunk() {
       return reader.read().then(function(result) {
@@ -1556,9 +1557,12 @@ function sendChatMessage() {
           try {
             var ev = JSON.parse(raw);
             if (ev.type === 'text') {
-              appendTextToMessage(textEl, ev.text);
+              // Skip text events that duplicate send_message content
+              var isDup = _sendMessageTexts.some(function(t) { return ev.text && (t.indexOf(ev.text) !== -1 || ev.text.indexOf(t) !== -1); });
+              if (!isDup) appendTextToMessage(textEl, ev.text);
             } else if (ev.type === 'tool_call') {
               if (ev.tool && ev.tool.endsWith('send_message') && ev.input && ev.input.text) {
+                _sendMessageTexts.push(String(ev.input.text));
                 appendTextToMessage(textEl, String(ev.input.text));
               } else {
                 addToolCallBlock(textEl, ev);
