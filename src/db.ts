@@ -82,6 +82,27 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add token_usage table (migration for existing DBs)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS token_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      agent_type TEXT NOT NULL DEFAULT 'claude',
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      num_turns INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'message',
+      task_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at);
+    CREATE INDEX IF NOT EXISTS idx_token_usage_group ON token_usage(group_folder);
+  `);
 }
 
 export function initDatabase(): void {
@@ -609,6 +630,95 @@ function migrateJsonState(): void {
       setRegisteredGroup(jid, group);
     }
   }
+}
+
+// --- Token usage ---
+
+export function logTokenUsage(entry: {
+  group_folder: string;
+  agent_type: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
+  cost_usd?: number;
+  duration_ms?: number;
+  num_turns?: number;
+  source?: string;
+  task_id?: string;
+}): void {
+  db.prepare(
+    `INSERT INTO token_usage (group_folder, agent_type, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, num_turns, source, task_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    entry.group_folder,
+    entry.agent_type,
+    entry.input_tokens,
+    entry.output_tokens,
+    entry.cache_read_tokens ?? 0,
+    entry.cache_creation_tokens ?? 0,
+    entry.cost_usd ?? 0,
+    entry.duration_ms ?? 0,
+    entry.num_turns ?? 0,
+    entry.source || 'chat',
+    entry.task_id || null,
+    new Date().toISOString(),
+  );
+}
+
+export interface TokenUsageDaily {
+  day: string;
+  agent_type: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  call_count: number;
+}
+
+export function getTokenUsageByDay(days: number): TokenUsageDaily[] {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  return db.prepare(
+    `SELECT date(created_at) as day, agent_type,
+       SUM(input_tokens) as input_tokens,
+       SUM(output_tokens) as output_tokens,
+       SUM(input_tokens + output_tokens) as total_tokens,
+       SUM(cost_usd) as cost_usd,
+       COUNT(*) as call_count
+     FROM token_usage
+     WHERE created_at > ?
+     GROUP BY day, agent_type
+     ORDER BY day`,
+  ).all(since) as TokenUsageDaily[];
+}
+
+export interface TokenUsageSummary {
+  agent_type: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  call_count: number;
+}
+
+export function getTokenUsageSummary(days: number): TokenUsageSummary[] {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  return db.prepare(
+    `SELECT agent_type,
+       SUM(input_tokens) as input_tokens,
+       SUM(output_tokens) as output_tokens,
+       SUM(cache_read_tokens) as cache_read_tokens,
+       SUM(cache_creation_tokens) as cache_creation_tokens,
+       SUM(input_tokens + output_tokens) as total_tokens,
+       SUM(cost_usd) as cost_usd,
+       COUNT(*) as call_count
+     FROM token_usage
+     WHERE created_at > ?
+     GROUP BY agent_type
+     ORDER BY total_tokens DESC`,
+  ).all(since) as TokenUsageSummary[];
 }
 
 // --- Dashboard stats ---

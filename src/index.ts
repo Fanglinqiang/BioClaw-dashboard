@@ -8,6 +8,7 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  STORE_DIR,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ONLY,
   TRIGGER_PATTERN,
@@ -462,14 +463,25 @@ async function main(): Promise<void> {
   };
 
   // Create and connect channels
+  // WhatsApp: only attempt if not TELEGRAM_ONLY and auth credentials exist
   if (!TELEGRAM_ONLY) {
-    whatsapp = new WhatsAppChannel({
-      onMessage: channelOpts.onMessage,
-      onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
-      registeredGroups: () => registeredGroups,
-    });
-    channels.push(whatsapp);
-    await whatsapp.connect();
+    const authCredsPath = path.join(STORE_DIR, 'auth', 'creds.json');
+    if (fs.existsSync(authCredsPath)) {
+      whatsapp = new WhatsAppChannel({
+        onMessage: channelOpts.onMessage,
+        onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+        registeredGroups: () => registeredGroups,
+      });
+      try {
+        channels.push(whatsapp);
+        await whatsapp.connect();
+      } catch (err) {
+        channels.splice(channels.indexOf(whatsapp), 1);
+        logger.warn({ err }, 'WhatsApp connection failed — run /setup to re-authenticate.');
+      }
+    } else {
+      logger.info('WhatsApp auth not found, skipping. Use /setup to configure.');
+    }
   }
 
   if (TELEGRAM_BOT_TOKEN) {

@@ -106,11 +106,28 @@ async function readStdin(): Promise<string> {
 
 const OUTPUT_START_MARKER = '---BIOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---BIOCLAW_OUTPUT_END---';
+const EVENT_START_MARKER = '---BIOCLAW_EVENT_START---';
+const EVENT_END_MARKER = '---BIOCLAW_EVENT_END---';
+
+interface ContainerEvent {
+  type: 'tool_call' | 'tool_result' | 'text';
+  id?: string;
+  tool?: string;
+  input?: Record<string, unknown>;
+  output?: string;
+  text?: string;
+}
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
   console.log(OUTPUT_END_MARKER);
+}
+
+function writeEvent(event: ContainerEvent): void {
+  console.log(EVENT_START_MARKER);
+  console.log(JSON.stringify(event));
+  console.log(EVENT_END_MARKER);
 }
 
 function log(message: string): void {
@@ -475,6 +492,38 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+    }
+
+    // Emit events for display in dashboard chat
+    if (message.type === 'assistant') {
+      const content = (message as any).message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'tool_use') {
+            writeEvent({ type: 'tool_call', id: block.id, tool: block.name, input: block.input });
+          } else if (block.type === 'text' && block.text && !block.text.includes('No response requested')) {
+            writeEvent({ type: 'text', text: block.text });
+          }
+        }
+      }
+    }
+
+    // Emit tool result events
+    if (message.type === 'user') {
+      const content = (message as any).message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'tool_result') {
+            const rawOutput = block.content;
+            const outputText = typeof rawOutput === 'string'
+              ? rawOutput
+              : Array.isArray(rawOutput)
+                ? rawOutput.map((c: any) => c.text || '').join('')
+                : JSON.stringify(rawOutput);
+            writeEvent({ type: 'tool_result', id: block.tool_use_id, output: (outputText || '').slice(0, 3000) });
+          }
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {

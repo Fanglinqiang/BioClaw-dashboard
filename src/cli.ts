@@ -40,18 +40,23 @@ function ensureDirs() {
     }, null, 2) + '\n');
   }
 
-  // Copy bio-tools skill
+  // Copy skills (recursive, handles nested dirs like scripts/)
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(DATA_DIR, 'sessions', GROUP_FOLDER, '.claude', 'skills');
+  function copyDirRecursive(src: string, dst: string) {
+    fs.mkdirSync(dst, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      const s = path.join(src, entry.name);
+      const d = path.join(dst, entry.name);
+      if (entry.isDirectory()) copyDirRecursive(s, d);
+      else fs.copyFileSync(s, d);
+    }
+  }
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.mkdirSync(dstDir, { recursive: true });
-      for (const file of fs.readdirSync(srcDir)) {
-        fs.copyFileSync(path.join(srcDir, file), path.join(dstDir, file));
-      }
+      copyDirRecursive(srcDir, path.join(skillsDst, skillDir));
     }
   }
 }

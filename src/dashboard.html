@@ -82,6 +82,19 @@ tr:last-child td{border-bottom:none}
 .test-area input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:12px;margin-bottom:8px}
 .test-area input:focus{outline:none;border-color:var(--accent2)}
 .test-result{background:var(--surface2);border-radius:6px;padding:10px;font-size:12px;color:var(--muted);min-height:40px;white-space:pre-wrap;word-break:break-all}
+.token-range-btn{background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:3px 12px;font-size:12px;color:var(--muted);cursor:pointer}
+.token-range-btn.active{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.token-summary{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px}
+.token-summary-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
+.token-summary-card h4{font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text)}
+.token-summary-card .token-num{font-size:22px;font-weight:700;color:var(--accent2)}
+.token-summary-card .token-detail{font-size:11px;color:var(--muted);margin-top:4px}
+.token-chart{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;overflow-x:auto}
+.token-chart-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px}
+.token-bar-group{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:40px}
+.token-bar-wrap{display:flex;gap:2px;align-items:flex-end;height:120px}
+.token-bar{width:14px;border-radius:3px 3px 0 0;min-height:2px;transition:height .3s}
+.token-bar-label{font-size:10px;color:var(--muted);white-space:nowrap}
 /* Skills */
 .skills-search{display:flex;gap:10px;margin-bottom:16px}
 .skills-search input{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px}
@@ -126,12 +139,124 @@ tr:last-child td{border-bottom:none}
 .form-row input:focus,.form-row select:focus{outline:none;border-color:var(--accent)}
 /* Groups msg stat */
 .group-msg-stat{font-size:11px;color:var(--accent);margin-top:2px}
+/* Chat tab */
+.chat-layout{display:flex;flex-direction:column;height:calc(100vh - 140px)}
+.chat-toolbar{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.chat-toolbar label{font-size:12px;color:var(--muted)}
+.chat-messages{flex:1;overflow-y:auto;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:14px;min-height:0}
+.chat-input-row{display:flex;gap:8px;margin-top:12px;align-items:flex-end}
+.chat-input-row textarea{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;resize:none;line-height:1.5;max-height:120px;overflow-y:auto;font-family:inherit}
+.chat-input-row textarea:focus{outline:none;border-color:var(--accent2)}
+.chat-send-btn{background:var(--accent2);border:none;color:#fff;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;height:42px;flex-shrink:0}
+.chat-send-btn:hover{background:var(--accent)}
+.chat-send-btn:disabled{opacity:.5;cursor:not-allowed}
+.msg-row{display:flex;gap:10px;align-items:flex-start}
+.msg-row.user{flex-direction:row-reverse}
+.msg-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;margin-top:2px;font-weight:700}
+.msg-avatar.user-av{background:#2b6cb0;color:#fff}
+.msg-avatar.assistant-av{background:#553c9a;color:#d6bcfa}
+.msg-bubble{max-width:82%;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.65}
+.msg-row.user .msg-bubble{background:#1a365d;border-color:#2a4a7f}
+.msg-text{white-space:pre-wrap;word-break:break-word}
+.msg-agent-label{font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.tool-block{margin-top:8px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.tool-header{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface2);cursor:pointer;font-size:12px;user-select:none;transition:.1s}
+.tool-header:hover{background:var(--border)}
+.tool-chevron{font-size:10px;transition:.2s}
+.tool-block.expanded .tool-chevron{transform:rotate(90deg)}
+.tool-name{font-weight:600;color:var(--accent);font-family:monospace;font-size:11px}
+.tool-status{font-size:10px;color:var(--muted);margin-left:auto}
+.tool-status.running{color:var(--warn-fg)}
+.tool-status.done{color:var(--success-fg)}
+.tool-body{padding:10px;font-family:'JetBrains Mono','Fira Code',monospace;font-size:11px;color:var(--muted);white-space:pre-wrap;word-break:break-all;max-height:220px;overflow-y:auto;display:none}
+.tool-block.expanded .tool-body{display:block}
+.tool-input-section{color:var(--accent2)}
+.tool-result-section{color:var(--success-fg);border-top:1px solid var(--border);margin-top:6px;padding-top:6px}
+.thinking-dots{display:inline-flex;gap:4px;padding:4px 0;align-items:center;flex-wrap:nowrap;white-space:nowrap}
+.thinking-dots span{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:dot-pulse 1.4s ease-in-out infinite}
+.thinking-dots span:nth-child(2){animation-delay:.2s}
+.thinking-dots span:nth-child(3){animation-delay:.4s}
+@keyframes dot-pulse{0%,80%,100%{opacity:.25;transform:scale(.85)}40%{opacity:1;transform:scale(1)}}
+.chat-empty{color:var(--muted);font-size:15px;text-align:center;padding:80px 20px;display:flex;flex-direction:column;align-items:center;gap:12px;flex:1;justify-content:center}
+.chat-empty .empty-icon{font-size:48px;opacity:.4}
+.chat-empty .empty-title{font-size:20px;font-weight:600;color:var(--text);opacity:.7}
+.chat-empty .empty-hint{font-size:13px;color:var(--muted);max-width:400px;line-height:1.6}
+/* View modes: chat (default) vs dashboard */
+body.view-dashboard .dashboard-only{display:flex !important}
+body.view-dashboard #dashboard-nav{display:flex !important}
+body.view-dashboard #dashboard-tabs{display:block !important}
+body.view-dashboard #main-chat-view{display:none !important}
+body.view-dashboard .chat-only{display:none !important}
+body:not(.view-dashboard) .dashboard-only{display:none !important}
+body:not(.view-dashboard) #dashboard-nav{display:none !important}
+body:not(.view-dashboard) #dashboard-tabs{display:none !important}
+body:not(.view-dashboard) #main-chat-view{display:flex !important;flex-direction:row}
+body:not(.view-dashboard) .chat-only{display:flex !important}
+#main-chat-view{height:calc(100vh - 56px);padding:0}
+#chat-main-area .chat-scroll-area{flex:1;overflow-y:auto;width:100%;display:flex;flex-direction:column;align-items:center;min-height:0}
+#chat-main-area .chat-messages{width:100%;max-width:820px;padding:20px 24px;display:flex;flex-direction:column;gap:16px;flex:1}
+#chat-main-area .chat-bottom{width:100%;display:flex;flex-direction:column;align-items:center;padding:0 24px 20px;flex-shrink:0}
+#chat-main-area .chat-input-wrap{width:100%;max-width:820px;background:var(--surface);border:1.5px solid var(--border);border-radius:16px;transition:border-color .15s,box-shadow .15s}
+body.light #chat-main-area .chat-input-wrap{border-color:#e2e8f0;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+body.light #chat-main-area .chat-input-row textarea::placeholder{color:#94a3b8}
+body.light #chat-main-area .chat-input-row textarea{color:#1e293b}
+#chat-main-area .chat-input-wrap:focus-within{border-color:var(--accent2);box-shadow:0 0 0 2px rgba(99,179,237,.12)}
+#chat-main-area .chat-attachments{display:flex;gap:8px;padding:10px 14px 0;flex-wrap:wrap}
+#chat-main-area .chat-attachments:empty{display:none}
+.attach-preview{position:relative;display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--text);max-width:200px}
+.attach-preview img{width:40px;height:40px;border-radius:4px;object-fit:cover}
+.attach-preview .attach-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attach-remove{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--danger-bg);color:#fc8181;border:none;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;line-height:1}
+#chat-main-area .chat-input-row{display:flex;gap:0;align-items:flex-end;padding:8px 8px 8px 14px}
+#chat-main-area .chat-input-row textarea{flex:1;background:transparent;border:none;padding:6px 4px;color:var(--text);font-size:14px;resize:none;line-height:1.5;max-height:160px;overflow-y:auto;font-family:inherit}
+#chat-main-area .chat-input-row textarea:focus{outline:none}
+#chat-main-area .chat-input-actions{display:flex;gap:4px;align-items:center;flex-shrink:0}
+.chat-action-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:8px;border-radius:8px;font-size:16px;transition:.15s;display:flex;align-items:center;justify-content:center}
+.chat-action-btn:hover{background:var(--surface2);color:var(--text)}
+.chat-action-btn svg{width:20px;height:20px}
+#chat-main-area .chat-send-btn{background:none;border:none;color:#10b981;cursor:pointer;padding:6px;display:flex;align-items:center;justify-content:center;transition:.15s;flex-shrink:0}
+#chat-main-area .chat-send-btn:hover{color:#059669;transform:scale(1.15)}
+#chat-main-area .chat-send-btn:disabled{opacity:.3;cursor:not-allowed;transform:none}
+#chat-main-area .chat-send-btn svg{width:28px;height:28px}
+#chat-main-area .chat-footer{display:flex;gap:10px;align-items:center;width:100%;max-width:820px;padding:8px 0 0;flex-wrap:wrap}
+#chat-main-area .chat-footer select{background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:4px 10px;border-radius:8px;font-size:12px;cursor:pointer}
+#chat-main-area .chat-footer select:focus{outline:none;border-color:var(--accent2)}
+#chat-main-area .chat-footer .footer-hint{font-size:11px;color:var(--muted);margin-left:auto}
+/* Chat sidebar */
+#chat-sidebar{width:260px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;height:calc(100vh - 56px);flex-shrink:0;transition:width .2s}
+#chat-sidebar .sidebar-header{padding:12px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)}
+#chat-sidebar .sidebar-new-btn{flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px;transition:.15s}
+#chat-sidebar .sidebar-new-btn:hover{border-color:var(--accent);color:var(--accent)}
+#chat-sidebar .sidebar-new-btn svg{width:16px;height:16px;flex-shrink:0}
+#chat-sidebar .sidebar-toggle-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:6px;display:flex;align-items:center}
+#chat-sidebar .sidebar-toggle-btn:hover{background:var(--surface2);color:var(--text)}
+#chat-sidebar .sidebar-toggle-btn svg{width:18px;height:18px}
+.chat-list{flex:1;overflow-y:auto;padding:8px}
+.chat-list-item{padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;transition:.1s;position:relative;margin-bottom:2px}
+.chat-list-item:hover{background:var(--surface2);color:var(--text)}
+.chat-list-item.active{background:var(--surface2);color:var(--text);font-weight:500}
+.chat-list-item .chat-item-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-list-item .chat-item-agent{font-size:10px;color:var(--muted);opacity:.7}
+.chat-list-item .chat-item-delete{display:none;background:none;border:none;color:var(--muted);cursor:pointer;padding:2px 4px;border-radius:4px;font-size:14px}
+.chat-list-item:hover .chat-item-delete{display:block}
+.chat-list-item .chat-item-delete:hover{color:#fc8181;background:var(--danger-bg)}
+.chat-list-date{font-size:11px;color:var(--muted);padding:8px 12px 4px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+#sidebar-collapse-btn{display:none;position:fixed;left:8px;top:64px;background:var(--surface);border:1px solid var(--border);color:var(--muted);cursor:pointer;padding:6px;border-radius:6px;z-index:10}
+#sidebar-collapse-btn:hover{color:var(--text);border-color:var(--accent)}
+#sidebar-collapse-btn svg{width:18px;height:18px}
+body.sidebar-collapsed #chat-sidebar{display:none}
+body.sidebar-collapsed #sidebar-collapse-btn{display:flex}
+#chat-main-area{flex:1;display:flex;flex-direction:column;align-items:center;min-width:0}
+.header-compact{padding:8px 20px}
+.dashboard-toggle{background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;transition:.15s;display:flex;align-items:center;gap:5px}
+.dashboard-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.dashboard-toggle.active{border-color:var(--accent);color:var(--accent);background:var(--accent2);color:#fff}
 </style>
 </head>
 <body>
-<header>
+<header class="header-compact">
   <h1>&#x1F9EC; BioClaw</h1>
-  <div class="stats">
+  <div class="stats dashboard-only">
     <div class="stat" onclick="showTabByName('groups')"><div class="val" id="s-groups">-</div><div class="lbl" data-i18n="Groups">Groups</div></div>
     <div class="stat" onclick="showTabByName('tasks')"><div class="val" id="s-tasks">-</div><div class="lbl" data-i18n="Tasks">Tasks</div></div>
     <div class="stat" onclick="showTabByName('models')"><div class="val" id="s-models">-</div><div class="lbl" data-i18n="Models">Models</div></div>
@@ -140,7 +265,8 @@ tr:last-child td{border-bottom:none}
     <div class="stat" onclick="showTabByName('logs')"><div class="val" id="s-chats">-</div><div class="lbl" data-i18n="Chats">Chats</div></div>
   </div>
   <div class="header-controls">
-    <select class="ctrl-btn" id="refresh-select" onchange="setRefreshInterval(this.value)" title="Auto-refresh interval">
+    <button class="dashboard-toggle" id="dashboard-btn" onclick="toggleDashboard()" title="Toggle Dashboard">&#x2699;&#xFE0F; <span data-i18n="Dashboard">Dashboard</span></button>
+    <select class="ctrl-btn dashboard-only" id="refresh-select" onchange="setRefreshInterval(this.value)" title="Auto-refresh interval">
       <option value="0">⏸ Manual</option>
       <option value="10000">↺ 10s</option>
       <option value="30000" selected>↺ 30s</option>
@@ -151,7 +277,7 @@ tr:last-child td{border-bottom:none}
     <button class="ctrl-btn" id="lang-btn" onclick="toggleLang()" title="Toggle language">EN</button>
   </div>
 </header>
-<nav>
+<nav id="dashboard-nav">
   <button id="nav-groups" class="active" onclick="showTab('groups',this)" data-i18n="Groups">Groups</button>
   <button id="nav-tasks" onclick="showTab('tasks',this)" data-i18n="Tasks">Tasks</button>
   <button id="nav-stats" onclick="showTab('stats',this)" data-i18n="Stats">Stats</button>
@@ -161,7 +287,65 @@ tr:last-child td{border-bottom:none}
   <button id="nav-alerts" onclick="showTab('alerts',this)" data-i18n="Alerts">Alerts</button>
   <button id="nav-logs" onclick="showTab('logs',this)" data-i18n="Logs">Logs</button>
 </nav>
-<div class="container">
+<!-- Main Chat View (default) -->
+<div id="main-chat-view">
+  <!-- Sidebar collapse button (visible when sidebar hidden) -->
+  <button id="sidebar-collapse-btn" onclick="toggleSidebar()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+  </button>
+  <!-- Chat Sidebar -->
+  <div id="chat-sidebar">
+    <div class="sidebar-header">
+      <button class="sidebar-new-btn" onclick="newChat()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        New Chat
+      </button>
+      <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Hide sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+    </div>
+    <div class="chat-list" id="chat-list"></div>
+  </div>
+  <!-- Chat Main Area -->
+  <div id="chat-main-area">
+    <div class="chat-scroll-area">
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-empty">
+          <div class="empty-icon">&#x1F9EC;</div>
+          <div class="empty-title">BioClaw</div>
+          <div class="empty-hint" data-i18n-hint>How can I help you with biology research today?</div>
+        </div>
+      </div>
+    </div>
+    <div class="chat-bottom">
+      <div class="chat-input-wrap">
+        <div class="chat-attachments" id="chat-attachments"></div>
+        <div class="chat-input-row">
+          <textarea id="chat-input" placeholder="Ask anything about biology..." onkeydown="chatKeydown(event)" rows="1" oninput="autoResizeTextarea(this)"></textarea>
+          <div class="chat-input-actions">
+            <button class="chat-action-btn" onclick="document.getElementById('file-upload').click()" title="Upload file">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <button class="chat-action-btn" onclick="document.getElementById('image-upload').click()" title="Upload image">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </button>
+            <button class="chat-send-btn" id="chat-send" onclick="sendChatMessage()">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M6 4l14 8-14 8V4z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+      <input type="file" id="file-upload" style="display:none" onchange="handleFileUpload(this)" accept=".txt,.csv,.tsv,.fasta,.fa,.fq,.fastq,.bed,.gff,.gtf,.vcf,.sam,.bam,.pdf,.json,.xml,.py,.r,.sh">
+      <input type="file" id="image-upload" style="display:none" onchange="handleImageUpload(this)" accept="image/*">
+      <div class="chat-footer">
+        <select id="chat-group-select" onchange="onGroupChange()"></select>
+        <span class="footer-hint">Enter &#x23CE; send · Shift+Enter newline</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="container" id="dashboard-tabs">
 
   <!-- Groups -->
   <div id="tab-groups" class="tab active">
@@ -213,6 +397,15 @@ tr:last-child td{border-bottom:none}
       <button onclick="loadModels()">&#x21bb; <span data-i18n="Refresh">Refresh</span></button>
     </div>
     <div id="models-list"><div class="empty">Loading...</div></div>
+    <div class="refresh-bar" style="margin-top:20px">
+      <span data-i18n="Token Usage">Token Usage</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button onclick="loadTokenUsage(7)" class="token-range-btn" data-days="7">7d</button>
+        <button onclick="loadTokenUsage(14)" class="token-range-btn active" data-days="14">14d</button>
+        <button onclick="loadTokenUsage(30)" class="token-range-btn" data-days="30">30d</button>
+      </div>
+    </div>
+    <div id="token-usage"><div class="empty">Loading...</div></div>
   </div>
 
   <!-- Skills -->
@@ -275,6 +468,7 @@ tr:last-child td{border-bottom:none}
     <div id="log-container"></div>
   </div>
 
+
 </div>
 
 <div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
@@ -301,6 +495,9 @@ var I18N = {
     'Max Duration':'最长耗时','Total Messages':'总消息数','No data':'暂无数据',
     'No registered groups':'暂无注册群组','No scheduled tasks':'暂无计划任务',
     'No running containers':'无运行中容器','No models configured':'未配置模型',
+    'Token Usage':'Token 消耗','Daily Token Usage':'每日 Token 消耗',
+    'Prompt':'输入','Completion':'输出','Total':'总计','Calls':'调用次数',
+    'No token usage data':'暂无 Token 消耗数据',
     'No skills match':'无匹配技能','No alert rules':'暂无告警规则',
     'No alerts firing':'当前无告警','Alerts firing':'告警触发',
     'Last msg':'最后消息','messages':'条消息','trigger':'触发词','added':'添加时间',
@@ -355,6 +552,19 @@ function setRefreshInterval(ms) {
   }
 }
 
+// ---- View Mode (chat vs dashboard) ----
+var _isDashboard = false;
+function toggleDashboard() {
+  _isDashboard = !_isDashboard;
+  document.body.classList.toggle('view-dashboard', _isDashboard);
+  var btn = document.getElementById('dashboard-btn');
+  btn.classList.toggle('active', _isDashboard);
+  if (_isDashboard) {
+    loadStats();
+    loadGroups();
+  }
+}
+
 // ---- Core ----
 var currentTab = 'groups';
 var logSource = null;
@@ -394,7 +604,7 @@ function showTab(name, btn) {
   else if (name === 'groups') loadGroups();
   else if (name === 'tasks') loadTasks();
   else if (name === 'containers') loadContainers();
-  else if (name === 'models') loadModels();
+  else if (name === 'models') { loadModels(); loadTokenUsage(); }
   else if (name === 'skills') loadSkills();
   else if (name === 'stats') loadActivityStats();
   else if (name === 'alerts') loadAlerts();
@@ -625,6 +835,68 @@ function runModelTest(modelId) {
     }).catch(function(e){ resultEl.textContent = '✗ '+e.message; });
 }
 
+// ---- Token Usage ----
+var _tokenDays = 14;
+var MODEL_COLORS = { minimax: '#6366f1', qwen: '#10b981', claude: '#f59e0b' };
+function loadTokenUsage(days) {
+  _tokenDays = days || _tokenDays;
+  document.querySelectorAll('.token-range-btn').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-days') == _tokenDays); });
+  var el = document.getElementById('token-usage');
+  el.innerHTML = '<div class="empty">Loading...</div>';
+  fetch('/api/token-usage?days=' + _tokenDays).then(function(r){return r.json();}).then(function(data){
+    var summary = data.summary || [];
+    var daily = data.daily || [];
+    if (!summary.length && !daily.length) { el.innerHTML = '<div class="empty">' + t('No token usage data') + '</div>'; return; }
+    var html = '';
+    // Summary cards
+    html += '<div class="token-summary">';
+    summary.forEach(function(s){
+      var color = MODEL_COLORS[s.agent_type] || '#888';
+      html += '<div class="token-summary-card">';
+      html += '<h4><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+color+';margin-right:6px"></span>'+esc(s.agent_type)+'</h4>';
+      html += '<div class="token-num">'+fmtCtx(s.total_tokens)+'</div>';
+      html += '<div class="token-detail">'+t('Prompt')+': '+fmtCtx(s.input_tokens)+' | '+t('Completion')+': '+fmtCtx(s.output_tokens)+'</div>';
+      if (s.cache_read_tokens) html += '<div class="token-detail">Cache read: '+fmtCtx(s.cache_read_tokens)+'</div>';
+      if (s.cost_usd) html += '<div class="token-detail">Cost: $'+s.cost_usd.toFixed(2)+'</div>';
+      html += '<div class="token-detail">'+t('Calls')+': '+s.call_count+'</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    // Daily bar chart
+    if (daily.length) {
+      var dayMap = {};
+      var agents = {};
+      daily.forEach(function(d){ dayMap[d.day] = dayMap[d.day] || {}; dayMap[d.day][d.agent_type] = d; agents[d.agent_type] = true; });
+      var days = Object.keys(dayMap).sort();
+      var agentNames = Object.keys(agents);
+      var maxTokens = 1;
+      days.forEach(function(day){ agentNames.forEach(function(a){ var v = (dayMap[day][a] || {}).total_tokens || 0; if(v > maxTokens) maxTokens = v; }); });
+      html += '<div class="token-chart">';
+      html += '<div class="token-chart-title" data-i18n="Daily Token Usage">' + t('Daily Token Usage') + '</div>';
+      html += '<div style="display:flex;gap:14px;margin-bottom:10px;flex-wrap:wrap">';
+      agentNames.forEach(function(a){ var color = MODEL_COLORS[a] || '#888'; html += '<span style="font-size:11px;color:var(--muted)"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+color+';margin-right:4px"></span>'+esc(a)+'</span>'; });
+      html += '</div>';
+      html += '<div style="display:flex;gap:8px;align-items:flex-end;overflow-x:auto;padding-bottom:4px">';
+      days.forEach(function(day){
+        html += '<div class="token-bar-group">';
+        html += '<div class="token-bar-wrap">';
+        agentNames.forEach(function(a){
+          var d = dayMap[day][a];
+          var total = d ? d.total_tokens : 0;
+          var h = Math.max(2, Math.round((total / maxTokens) * 110));
+          var color = MODEL_COLORS[a] || '#888';
+          html += '<div class="token-bar" style="height:'+h+'px;background:'+color+'" title="'+esc(a)+': '+fmtCtx(total)+' tokens"></div>';
+        });
+        html += '</div>';
+        html += '<div class="token-bar-label">'+day.slice(5)+'</div>';
+        html += '</div>';
+      });
+      html += '</div></div>';
+    }
+    el.innerHTML = html;
+  }).catch(function(e){ el.innerHTML = '<div class="empty">Error: '+esc(e.message)+'</div>'; });
+}
+
 // ---- Skills ----
 var _allSkillItems = [];
 function loadSkills() {
@@ -811,12 +1083,548 @@ function deleteAlertRule(idx) {
   saveAlerts().then(function(){ loadAlerts(); });
 }
 
+// ---- Chat ----
+var _chatSessionId = null;
+var _chatStreaming = false;
+var _chatAbortController = null;
+var _chatInitialized = false;
+// Chat session management — persisted in localStorage
+var _chatSessions = [];
+var _activeChatId = null;
+try {
+  var _stored = localStorage.getItem('bioclaw_chat_sessions');
+  if (_stored) _chatSessions = JSON.parse(_stored);
+  _activeChatId = localStorage.getItem('bioclaw_active_chat') || null;
+} catch(e) {}
+function _saveSessions() {
+  try {
+    localStorage.setItem('bioclaw_chat_sessions', JSON.stringify(_chatSessions));
+    localStorage.setItem('bioclaw_active_chat', _activeChatId || '');
+  } catch(e) {}
+}
+// Map: tool_use_id -> {block element, result section element}
+var _chatToolBlocks = {};
+
+function initChat() {
+  if (_chatInitialized) return;
+  _chatInitialized = true;
+  // Populate group selector from /api/groups
+  fetch('/api/groups').then(function(r){return r.json();}).then(function(groups) {
+    var sel = document.getElementById('chat-group-select');
+    sel.innerHTML = '';
+    // Add a default "dashboard" option
+    var defOpt = document.createElement('option');
+    defOpt.value = '__dashboard__';
+    defOpt.textContent = 'Dashboard (Claude)';
+    sel.appendChild(defOpt);
+    // Add registered groups
+    var folders = Object.keys(groups);
+    folders.forEach(function(folder) {
+      var g = groups[folder];
+      var agent = g.agentType || 'claude';
+      var opt = document.createElement('option');
+      opt.value = folder;
+      opt.textContent = (g.name || folder) + ' (' + agent + ')';
+      sel.appendChild(opt);
+    });
+    // Restore last selected group
+    var lastGroup = localStorage.getItem('bioclaw_chat_group');
+    if (lastGroup && sel.querySelector('option[value="' + lastGroup + '"]')) {
+      sel.value = lastGroup;
+    }
+  }).catch(function(){});
+  renderChatList();
+  // Restore last active chat session
+  if (_activeChatId && _chatSessions.length) {
+    var active = _chatSessions.find(function(s) { return s.id === _activeChatId; });
+    if (active) {
+      _chatSessionId = active.sessionId || null;
+      _chatToolBlocks = active.toolBlocks || {};
+      document.getElementById('chat-messages').innerHTML = active.html || _getEmptyHtml();
+    }
+  }
+}
+
+function onGroupChange() {
+  var sel = document.getElementById('chat-group-select');
+  localStorage.setItem('bioclaw_chat_group', sel.value);
+}
+
+// ---- Chat Session Management ----
+function _genChatId() { return 'chat_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8); }
+
+function _getEmptyHtml() {
+  return '<div class="chat-empty"><div class="empty-icon">&#x1F9EC;</div><div class="empty-title">BioClaw</div><div class="empty-hint">How can I help you with biology research today?</div></div>';
+}
+
+function _saveCurrentChatState() {
+  if (!_activeChatId) return;
+  var session = _chatSessions.find(function(s) { return s.id === _activeChatId; });
+  if (session) {
+    session.html = document.getElementById('chat-messages').innerHTML;
+    session.sessionId = _chatSessionId;
+    session.toolBlocks = JSON.parse(JSON.stringify(_chatToolBlocks));
+  }
+  _saveSessions();
+}
+
+function _extractTitle(text) {
+  if (!text) return 'New Chat';
+  var clean = text.replace(/<[^>]*>/g, '').trim();
+  return clean.length > 40 ? clean.slice(0, 40) + '...' : clean || 'New Chat';
+}
+
+function newChat() {
+  if (_chatAbortController) { _chatAbortController.abort(); _chatAbortController = null; }
+  _chatStreaming = false;
+  document.getElementById('chat-send').disabled = false;
+  _saveCurrentChatState();
+  var id = _genChatId();
+  var groupSel = document.getElementById('chat-group-select');
+  var groupLabel = groupSel ? groupSel.options[groupSel.selectedIndex]?.text || 'Dashboard' : 'Dashboard';
+  var groupFolder = groupSel ? groupSel.value || '__dashboard__' : '__dashboard__';
+  _chatSessions.unshift({ id: id, title: 'New Chat', agent: groupLabel, groupFolder: groupFolder, html: null, sessionId: null, toolBlocks: {}, created: Date.now() });
+  _activeChatId = id;
+  _chatSessionId = null;
+  _chatToolBlocks = {};
+  _chatAttachments = [];
+  document.getElementById('chat-attachments').innerHTML = '';
+  document.getElementById('chat-messages').innerHTML = _getEmptyHtml();
+  _saveSessions();
+  renderChatList();
+}
+
+function switchChat(id) {
+  if (id === _activeChatId) return;
+  if (_chatStreaming) return; // don't switch while streaming
+  _saveCurrentChatState();
+  var session = _chatSessions.find(function(s) { return s.id === id; });
+  if (!session) return;
+  _activeChatId = id;
+  _chatSessionId = session.sessionId || null;
+  _chatToolBlocks = session.toolBlocks || {};
+  _chatAttachments = [];
+  document.getElementById('chat-attachments').innerHTML = '';
+  document.getElementById('chat-messages').innerHTML = session.html || _getEmptyHtml();
+  // restore group selection
+  var groupSel = document.getElementById('chat-group-select');
+  if (groupSel && session.groupFolder) groupSel.value = session.groupFolder;
+  renderChatList();
+  // scroll to bottom
+  var scrollArea = document.querySelector('#chat-main-area .chat-scroll-area');
+  if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
+}
+
+function deleteChat(id, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  _chatSessions = _chatSessions.filter(function(s) { return s.id !== id; });
+  if (_activeChatId === id) {
+    if (_chatSessions.length > 0) {
+      switchChat(_chatSessions[0].id);
+    } else {
+      newChat();
+    }
+  }
+  _saveSessions();
+  renderChatList();
+}
+
+function renderChatList() {
+  var list = document.getElementById('chat-list');
+  if (!list) return;
+  if (_chatSessions.length === 0) {
+    list.innerHTML = '<div style="padding:20px 12px;color:var(--muted);font-size:12px;text-align:center">No chats yet</div>';
+    return;
+  }
+  var html = '';
+  var today = new Date(); today.setHours(0,0,0,0);
+  var yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+  var lastGroup = '';
+  _chatSessions.forEach(function(s) {
+    var d = new Date(s.created); d.setHours(0,0,0,0);
+    var group = d >= today ? 'Today' : d >= yesterday ? 'Yesterday' : d.toLocaleDateString();
+    if (group !== lastGroup) {
+      html += '<div class="chat-list-date">' + group + '</div>';
+      lastGroup = group;
+    }
+    var active = s.id === _activeChatId ? ' active' : '';
+    html += '<div class="chat-list-item' + active + '" onclick="switchChat(\'' + s.id + '\')">' +
+      '<span class="chat-item-title">' + (s.title || 'New Chat') + '</span>' +
+      '<span class="chat-item-agent">' + (s.agent || '') + '</span>' +
+      '<button class="chat-item-delete" onclick="deleteChat(\'' + s.id + '\', event)" title="Delete">&times;</button>' +
+      '</div>';
+  });
+  list.innerHTML = html;
+}
+
+function toggleSidebar() {
+  document.body.classList.toggle('sidebar-collapsed');
+}
+
+function clearChat() {
+  newChat();
+}
+
+function autoResizeTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
+// ---- File/Image Upload ----
+var _chatAttachments = [];
+
+function handleFileUpload(input) {
+  if (!input.files || !input.files.length) return;
+  var file = input.files[0];
+  if (file.size > 10 * 1024 * 1024) { alert('File too large (max 10MB)'); input.value = ''; return; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    _chatAttachments.push({ name: file.name, type: 'file', data: e.target.result, mime: file.type });
+    renderAttachments();
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
+function handleImageUpload(input) {
+  if (!input.files || !input.files.length) return;
+  var file = input.files[0];
+  if (file.size > 10 * 1024 * 1024) { alert('Image too large (max 10MB)'); input.value = ''; return; }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    _chatAttachments.push({ name: file.name, type: 'image', data: e.target.result, mime: file.type });
+    renderAttachments();
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
+function removeAttachment(idx) {
+  _chatAttachments.splice(idx, 1);
+  renderAttachments();
+}
+
+function renderAttachments() {
+  var el = document.getElementById('chat-attachments');
+  var html = '';
+  _chatAttachments.forEach(function(a, i) {
+    html += '<div class="attach-preview">';
+    if (a.type === 'image') {
+      html += '<img src="' + a.data + '" alt="' + esc(a.name) + '">';
+    } else {
+      html += '<span style="font-size:16px">&#x1F4CE;</span>';
+    }
+    html += '<span class="attach-name">' + esc(a.name) + '</span>';
+    html += '<button class="attach-remove" onclick="removeAttachment(' + i + ')">&times;</button>';
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function chatKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChatMessage();
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function appendUserBubble(text) {
+  var container = document.getElementById('chat-messages');
+  // Remove empty placeholder
+  var placeholder = container.querySelector('.chat-empty');
+  if (placeholder) placeholder.remove();
+
+  var row = document.createElement('div');
+  row.className = 'msg-row user';
+  row.innerHTML =
+    '<div class="msg-avatar user-av">You</div>' +
+    '<div class="msg-bubble"><div class="msg-text">' + escHtml(text) + '</div></div>';
+  container.appendChild(row);
+  var scrollArea = container.closest('.chat-scroll-area') || container;
+  scrollArea.scrollTop = scrollArea.scrollHeight;
+}
+
+function createAssistantBubble(agentLabel) {
+  var container = document.getElementById('chat-messages');
+  var row = document.createElement('div');
+  row.className = 'msg-row assistant';
+  row.innerHTML =
+    '<div class="msg-avatar assistant-av">Bio</div>' +
+    '<div class="msg-bubble">' +
+      '<div class="msg-agent-label">' + escHtml(agentLabel) + '</div>' +
+      '<div class="msg-text" id="chat-current-text">' +
+        '<div class="thinking-dots"><span></span><span></span><span></span></div>' +
+      '</div>' +
+    '</div>';
+  container.appendChild(row);
+  var scrollArea = container.closest('.chat-scroll-area') || container;
+  scrollArea.scrollTop = scrollArea.scrollHeight;
+  return row.querySelector('.msg-text');
+}
+
+function addToolCallBlock(textEl, event) {
+  // Remove thinking dots if present
+  var dots = textEl.querySelector('.thinking-dots');
+  if (dots) dots.remove();
+
+  var block = document.createElement('div');
+  block.className = 'tool-block';
+  block.id = 'tool-' + (event.id || Math.random().toString(36).slice(2));
+  block.innerHTML =
+    '<div class="tool-header" onclick="this.parentElement.classList.toggle(\'expanded\')">' +
+      '<span class="tool-chevron">&#x25B6;</span>' +
+      '<span class="tool-name">&#x1F527; ' + escHtml(event.tool || 'tool') + '</span>' +
+      '<span class="tool-status running" id="tool-status-' + escHtml(event.id||'') + '">running…</span>' +
+    '</div>' +
+    '<div class="tool-body">' +
+      '<div class="tool-input-section">' + escHtml(formatToolInput(event.input)) + '</div>' +
+      '<div class="tool-result-section" id="tool-result-' + escHtml(event.id||'') + '" style="display:none"></div>' +
+    '</div>';
+  textEl.appendChild(block);
+
+  _chatToolBlocks[event.id || ''] = {
+    block: block,
+    statusEl: block.querySelector('#tool-status-' + (event.id||'')),
+    resultEl: block.querySelector('#tool-result-' + (event.id||'')),
+  };
+
+  var container = document.getElementById('chat-messages');
+  var scrollArea = container.closest('.chat-scroll-area') || container;
+  scrollArea.scrollTop = scrollArea.scrollHeight;
+}
+
+function updateToolResult(event) {
+  var entry = _chatToolBlocks[event.id || ''];
+  if (!entry) return;
+  if (entry.statusEl) { entry.statusEl.textContent = 'done'; entry.statusEl.className = 'tool-status done'; }
+  if (entry.resultEl) {
+    entry.resultEl.textContent = (event.output || '').slice(0, 2000);
+    entry.resultEl.style.display = '';
+  }
+}
+
+function formatToolInput(input) {
+  if (!input) return '';
+  // For Bash, show command directly
+  if (input.command) return '$ ' + input.command;
+  try { return JSON.stringify(input, null, 2); } catch(e) { return String(input); }
+}
+
+function appendTextToMessage(textEl, text) {
+  // Remove thinking dots if present
+  var dots = textEl.querySelector('.thinking-dots');
+  if (dots) dots.remove();
+
+  // Find or create text node container
+  var textNode = textEl.querySelector('.msg-final-text');
+  if (!textNode) {
+    textNode = document.createElement('span');
+    textNode.className = 'msg-final-text';
+    textEl.appendChild(textNode);
+  }
+  textNode.textContent += text;
+
+  var container = document.getElementById('chat-messages');
+  var scrollArea = container.closest('.chat-scroll-area') || container;
+  scrollArea.scrollTop = scrollArea.scrollHeight;
+}
+
+function showChatError(textEl, message) {
+  var dots = textEl ? textEl.querySelector('.thinking-dots') : null;
+  if (dots) dots.remove();
+  var errEl = document.createElement('div');
+  errEl.style.cssText = 'color:#fc8181;font-size:12px;margin-top:4px';
+  errEl.textContent = '⚠ ' + message;
+  if (textEl) textEl.appendChild(errEl);
+}
+
+function sendChatMessage() {
+  var input = document.getElementById('chat-input');
+  var text = input.value.trim();
+  if ((!text && !_chatAttachments.length) || _chatStreaming) return;
+  if (!text && _chatAttachments.length) text = 'Please analyze the attached file(s).';
+
+  var groupSel = document.getElementById('chat-group-select');
+  var groupFolder = groupSel.value || '__dashboard__';
+  var groupLabel = groupSel.options[groupSel.selectedIndex]?.text || groupFolder;
+
+  // Auto-create session if none active
+  if (!_activeChatId) {
+    var id = _genChatId();
+    _chatSessions.unshift({ id: id, title: 'New Chat', agent: groupLabel, groupFolder: groupFolder, html: null, sessionId: null, toolBlocks: {}, created: Date.now() });
+    _activeChatId = id;
+  }
+  // Update title from first message
+  var session = _chatSessions.find(function(s) { return s.id === _activeChatId; });
+  if (session && session.title === 'New Chat') {
+    session.title = _extractTitle(text);
+    session.agent = groupLabel;
+    session.groupFolder = groupFolder;
+    renderChatList();
+  }
+
+  // Build message with attachments
+  var fullMessage = text;
+  var attachments = _chatAttachments.slice();
+  var _textExts = ['.txt','.csv','.tsv','.fasta','.fa','.fq','.fastq','.bed','.gff','.gtf','.vcf','.json','.xml','.py','.r','.sh','.md','.yaml','.yml','.toml'];
+  if (attachments.length) {
+    attachments.forEach(function(a) {
+      if (a.type === 'file') {
+        var ext = (a.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+        if (_textExts.indexOf(ext) !== -1) {
+          // Inline text file content into message
+          var base64 = a.data.split(',')[1] || '';
+          try {
+            var decoded = atob(base64);
+            fullMessage += '\n\n[File: ' + a.name + ']\n' + decoded;
+          } catch(e) { /* skip if decode fails */ }
+        }
+        // Binary files (PDF, SAM, BAM, etc.) will be sent as attachments
+      }
+    });
+  }
+
+  input.value = '';
+  input.style.height = 'auto';
+  _chatStreaming = true;
+  document.getElementById('chat-send').disabled = true;
+
+  // Show user bubble with attachment info
+  var displayText = text;
+  if (attachments.length) {
+    displayText += '\n📎 ' + attachments.map(function(a){ return a.name; }).join(', ');
+  }
+  appendUserBubble(displayText);
+  // Show image previews in chat
+  if (attachments.length) {
+    var lastMsg = document.getElementById('chat-messages').lastElementChild;
+    var bubble = lastMsg ? lastMsg.querySelector('.msg-bubble') : null;
+    if (bubble) {
+      attachments.forEach(function(a) {
+        if (a.type === 'image') {
+          var img = document.createElement('img');
+          img.src = a.data;
+          img.style.cssText = 'max-width:200px;max-height:150px;border-radius:6px;margin-top:8px;display:block';
+          bubble.appendChild(img);
+        }
+      });
+    }
+  }
+  _chatAttachments = [];
+  renderAttachments();
+
+  var textEl = createAssistantBubble(groupLabel);
+
+  var body = JSON.stringify({
+    message: fullMessage,
+    groupFolder: groupFolder === '__dashboard__' ? 'dashboard' : groupFolder,
+    sessionId: _chatSessionId || undefined,
+    attachments: attachments.map(function(a){ return { name: a.name, data: a.data, mime: a.mime, fileType: a.type }; })
+  });
+
+  _chatAbortController = new AbortController();
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body,
+    signal: _chatAbortController.signal
+  }).then(function(response) {
+    var reader = response.body.getReader();
+    var decoder = new TextDecoder();
+    var buf = '';
+
+    function readChunk() {
+      return reader.read().then(function(result) {
+        if (result.done) {
+          _chatStreaming = false;
+          document.getElementById('chat-send').disabled = false;
+          // Remove lingering thinking dots
+          var dots = textEl.querySelector('.thinking-dots');
+          if (dots) dots.remove();
+          return;
+        }
+        buf += decoder.decode(result.value, { stream: true });
+        var lines = buf.split('\n');
+        buf = lines.pop() || '';
+        lines.forEach(function(line) {
+          if (!line.startsWith('data: ')) return;
+          var raw = line.slice(6);
+          try {
+            var ev = JSON.parse(raw);
+            if (ev.type === 'text') {
+              appendTextToMessage(textEl, ev.text);
+            } else if (ev.type === 'tool_call') {
+              if (ev.tool && ev.tool.endsWith('send_message') && ev.input && ev.input.text) {
+                appendTextToMessage(textEl, String(ev.input.text));
+              } else {
+                addToolCallBlock(textEl, ev);
+              }
+            } else if (ev.type === 'tool_result') {
+              updateToolResult(ev);
+            } else if (ev.type === 'session') {
+              _chatSessionId = ev.sessionId;
+            } else if (ev.type === 'status') {
+              var dots = textEl.querySelector('.thinking-dots');
+              if (dots) {
+                var statusSpan = dots.querySelector('.status-text');
+                if (!statusSpan) {
+                  statusSpan = document.createElement('span');
+                  statusSpan.className = 'status-text';
+                  statusSpan.style.cssText = 'font-size:11px;color:var(--muted);margin-left:6px';
+                  dots.appendChild(statusSpan);
+                }
+                statusSpan.textContent = ev.text;
+              }
+            } else if (ev.type === 'done') {
+              _chatStreaming = false;
+              document.getElementById('chat-send').disabled = false;
+              var dots2 = textEl.querySelector('.thinking-dots');
+              if (dots2) dots2.remove();
+              // If no text was added at all, show a placeholder
+              if (!textEl.querySelector('.msg-final-text') && !textEl.querySelector('.tool-block')) {
+                var ph = document.createElement('span');
+                ph.className = 'msg-final-text';
+                ph.style.color = 'var(--muted)';
+                ph.textContent = '(no response)';
+                textEl.appendChild(ph);
+              }
+              _saveCurrentChatState();
+            } else if (ev.type === 'error') {
+              showChatError(textEl, ev.message);
+              _chatStreaming = false;
+              document.getElementById('chat-send').disabled = false;
+              _saveCurrentChatState();
+            }
+          } catch(e) { /* ignore malformed */ }
+        });
+        return readChunk();
+      });
+    }
+    return readChunk();
+  }).catch(function(err) {
+    if (err.name === 'AbortError') return; // cancelled by newChat
+    showChatError(textEl, 'Request failed: ' + err.message);
+    _chatStreaming = false;
+    document.getElementById('chat-send').disabled = false;
+  });
+
+  // Auto-resize textarea
+  input.addEventListener('input', function() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  }, { once: true });
+}
+
 // ---- Init ----
 applyTheme();
 applyI18n();
 setRefreshInterval(30000);
-loadStats();
-loadGroups();
+// Chat is the default view — init it immediately
+initChat();
 </script>
 </body>
 </html>

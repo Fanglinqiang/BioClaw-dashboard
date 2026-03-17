@@ -62,10 +62,10 @@ export const TIMEZONE =
 
 // MiniMax (optional)
 export const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
-export const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.chat/v1';
-export const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'MiniMax-Text-01';
+export const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimax.chat/v1';
+export const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'MiniMax-M2.5';
 
-// Qwen (optional)
-export const QWEN_API_BASE = process.env.QWEN_API_BASE || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+// Qwen (optional — set via env or .env file)
+export const QWEN_API_BASE = process.env.QWEN_API_BASE || '';
 export const QWEN_AUTH_TOKEN = process.env.QWEN_AUTH_TOKEN || '';
-export const QWEN_MODEL = process.env.QWEN_MODEL || 'qwen-plus';
+export const QWEN_MODEL = process.env.QWEN_MODEL || '';

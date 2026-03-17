@@ -4,7 +4,7 @@
 
 # BioClaw
 
-### AI-Powered Bioinformatics Research Assistant on WhatsApp
+### AI-Powered Bioinformatics Research Assistant
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -13,7 +13,7 @@
 [![Paper](https://img.shields.io/badge/bioRxiv-STELLA-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.07.01.662467v2)
 [![arXiv](https://img.shields.io/badge/arXiv-2507.02004-b31b1b.svg)](https://arxiv.org/abs/2507.02004)
 
-**BioClaw** brings the power of computational biology directly into WhatsApp group chats. Researchers can run BLAST searches, render protein structures, generate publication-quality plots, perform sequencing QC, and search the literature — all through natural language messages.
+**BioClaw** brings the power of computational biology to messaging platforms and the web. Researchers can run BLAST searches, render protein structures, generate publication-quality plots, perform sequencing QC, and search the literature — all through natural language.
 
 Built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) architecture with bioinformatics tools and skills from the [STELLA](https://github.com/zaixizhang/STELLA) project, powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-sdk).
 
@@ -33,6 +33,8 @@ Welcome to join our WeChat group to discuss and exchange ideas! Scan the QR code
 
 - [Overview](#overview)
 - [Quick Start](#quick-start)
+- [Web Dashboard & Chat](#web-dashboard--chat)
+- [Multi-Model Support](#multi-model-support)
 - [Demo Examples](#demo-examples)
 - [System Architecture](#system-architecture)
 - [Included Tools](#included-tools)
@@ -44,7 +46,7 @@ Welcome to join our WeChat group to discuss and exchange ideas! Scan the QR code
 
 The rapid growth of biomedical data, tools, and literature has created a fragmented research landscape that outpaces human expertise. Researchers frequently need to switch between command-line bioinformatics tools, visualization software, databases, and literature search engines — often across different machines and environments.
 
-**BioClaw** addresses this by providing a conversational interface to a comprehensive bioinformatics toolkit. By messaging `@Bioclaw` in a WhatsApp group, researchers can:
+**BioClaw** addresses this by providing a conversational interface to a comprehensive bioinformatics toolkit. Researchers can interact via WhatsApp, Telegram, WeCom, or the built-in web chat to:
 
 - **Sequence Analysis** — Run BLAST searches against NCBI databases, align reads with BWA/minimap2, and call variants
 - **Quality Control** — Generate FastQC reports on sequencing data with automated interpretation
@@ -59,10 +61,9 @@ Results — including images, plots, and structured reports — are delivered di
 
 ### Prerequisites
 
-- macOS or Linux
+- macOS with [Apple Container](https://developer.apple.com/documentation/apple-containers) or Linux with Docker
 - Node.js 20+
-- Docker Desktop
-- Anthropic API key
+- Anthropic API key (or Claude Code OAuth token)
 
 ### Installation
 
@@ -76,29 +77,93 @@ npm install
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your Anthropic API key and WhatsApp credentials
+# Edit .env with your API keys
+
+# Build the agent container image
+./container/build.sh
 
 # Start BioClaw
 npm start
 ```
 
-### Usage
+### Second Quick Start
 
-In any WhatsApp group where BioClaw is connected, simply message:
-
-```
-@Bioclaw <your request>
-```
-
-## Second Quick Start
-
-Just send the message to OpenClaw:
+Just send this message to [OpenClaw](https://github.com/qwibitai/nanoclaw):
 
 ```text
 install https://github.com/Runchuan-BU/BioClaw
 ```
 
+### Usage
+
+**Via messaging platforms** — In any connected WhatsApp/Telegram/WeCom group:
+```
+@Bioclaw <your request>
+```
+
+**Via web chat** — Open `http://localhost:3847` in your browser and start chatting directly.
+
 See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use demo prompts with expected outputs.
+
+## Web Dashboard & Chat
+
+BioClaw includes a built-in web interface accessible at `http://localhost:3847`.
+
+### Chat Interface
+
+- **Open WebUI-style layout** — Centered conversation area with left sidebar for chat history
+- **Group selector** — Choose any registered group to route messages through its configured agent and container
+- **File & image upload** — Attach biology data files (FASTA, VCF, BAM, CSV, PDF, etc.) and images directly in chat
+- **Chat persistence** — Conversations are saved to localStorage and survive page refreshes
+- **Streaming responses** — Real-time token-by-token response display with tool use visualization
+
+### Dashboard Tabs
+
+| Tab | Description |
+|-----|-------------|
+| **Groups** | All registered messaging groups with agent type, message count, and last activity |
+| **Tasks** | Scheduled tasks — view, pause, resume, and inspect run history |
+| **Stats** | Activity charts (messages/day, task runs/day, success rate) with 7d/14d/30d period selector |
+| **Models** | Configured AI models with connection status, specs, quick test, and daily token usage tracking |
+| **Skills** | Installed agent skills (90+ bio tools and container skills) with search and category filters |
+| **Containers** | Running container instances with image info |
+| **Alerts** | Alert rules for group silence thresholds |
+| **Logs** | Live log viewer with auto-scroll and error filtering |
+
+### UI Controls
+
+- **Dark / Light theme** — Toggle in the header, persisted in `localStorage`
+- **Language** — Switch between Chinese (中文) and English (EN)
+- **Auto-refresh** — Select refresh interval (off / 10s / 30s / 1min / 5min)
+
+## Multi-Model Support
+
+BioClaw supports multiple AI backends. Each group can be configured with a different agent type:
+
+| Agent | Backend | Features |
+|-------|---------|----------|
+| **Claude** | Anthropic (container) | Full tool use, file I/O, biology skills, persistent sessions |
+| **MiniMax** | MiniMax API (OpenAI-compatible) | Chat with reasoning, image understanding, PDF text extraction |
+| **Qwen** | Local/remote Qwen (OpenAI-compatible) | Chat with local model, image understanding, PDF text extraction |
+
+Configure via environment variables in `.env`:
+
+```bash
+# Claude (required)
+ANTHROPIC_API_KEY=sk-ant-...
+# or
+CLAUDE_CODE_OAUTH_TOKEN=...
+
+# MiniMax (optional)
+MINIMAX_API_KEY=sk-...
+MINIMAX_BASE_URL=https://api.minimax.chat/v1
+MINIMAX_MODEL=MiniMax-M2.5
+
+# Qwen (optional)
+QWEN_API_BASE=http://your-qwen-server:8864/v1
+QWEN_AUTH_TOKEN=your-token
+QWEN_MODEL=your-model-name
+```
 
 ## Demo Examples
 
@@ -177,36 +242,30 @@ Below are live demonstrations of BioClaw handling real bioinformatics tasks via 
 BioClaw is built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) container-based agent architecture, extended with biomedical tools and domain knowledge from the [STELLA](https://github.com/zaixizhang/STELLA) framework.
 
 ```
-WhatsApp ──► Node.js Orchestrator ──► SQLite (state) ──► Docker Container
-                                                              │
-                                                     Claude Agent SDK
-                                                              │
-                                                   ┌──────────┴──────────┐
-                                                   │   Bioinformatics    │
-                                                   │      Toolbox        │
-                                                   ├─────────────────────┤
-                                                   │ BLAST+  │ SAMtools  │
-                                                   │ BWA     │ BEDTools  │
-                                                   │ FastQC  │ PyMOL     │
-                                                   │ minimap2│ seqtk     │
-                                                   ├─────────────────────┤
-                                                   │   Python Libraries  │
-                                                   ├─────────────────────┤
-                                                   │ BioPython │ pandas  │
-                                                   │ RDKit     │ scanpy  │
-                                                   │ PyDESeq2  │ pysam   │
-                                                   │ matplotlib│ seaborn │
-                                                   └─────────────────────┘
+Channels (WhatsApp/Telegram/WeCom/Web)
+         │
+         ▼
+   Node.js Orchestrator ──► SQLite (state)
+         │
+         ├──► Claude Container Agent
+         │         │
+         │    Claude Agent SDK + Bio Tools
+         │    (BLAST, SAMtools, BWA, PyMOL, ...)
+         │
+         ├──► MiniMax API (OpenAI-compatible)
+         │
+         └──► Qwen API (OpenAI-compatible)
 ```
 
 **Key design principles (inherited from NanoClaw):**
 
 | Component | Description |
 |-----------|-------------|
-| **Container Isolation** | Each conversation group runs in its own Docker container with pre-installed bioinformatics tools |
+| **Container Isolation** | Each conversation group runs in its own container with pre-installed bioinformatics tools |
 | **Filesystem IPC** | Text and image results are communicated between the agent and orchestrator via the filesystem |
 | **Per-Group State** | SQLite database tracks messages, sessions, and group-specific workspaces |
 | **Channel Agnostic** | Channels self-register at startup; the orchestrator connects whichever ones have credentials |
+| **Multi-Model** | Each group can be configured with a different AI backend (Claude, MiniMax, Qwen) |
 
 **Biomedical capabilities (attributed to STELLA):**
 
@@ -238,83 +297,39 @@ The bioinformatics tool suite and domain-specific skills — including sequence 
 | **scanpy** | Single-cell RNA-seq analysis |
 | **pysam** | SAM/BAM file access from Python |
 
-## Quick Start
-
-### Prerequisites
-
-- macOS or Linux
-- Node.js 20+
-- Docker Desktop
-- Anthropic API key
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/Runchuan-BU/BioClaw.git
-cd BioClaw
-
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Anthropic API key
-
-# Build the agent Docker image
-docker build -t bioclaw-agent:latest container/
-
-# Start BioClaw (scan the QR code with WhatsApp on first run)
-npm start
-```
-
-### Usage
-
-In any WhatsApp group where BioClaw is connected, simply message:
-
-```
-@Bioclaw <your request>
-```
-
-See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use demo prompts with expected outputs.
-
-## Web Dashboard
-
-BioClaw includes a built-in web dashboard accessible at `http://localhost:3847` (or the port set by `DASHBOARD_PORT`).
-
-### Features
-
-| Tab | Description |
-|-----|-------------|
-| **Overview** | Live stats: message count, task runs, connected groups, registered models and skills |
-| **Groups** | All WhatsApp/Telegram groups with message count and last-activity time |
-| **Tasks** | Scheduled task list — view, pause, resume, and cancel tasks |
-| **Stats** | Activity charts (messages per day, task runs per day, success rate, avg/max duration) with 7d/14d/30d period selector |
-| **Alerts** | Alert rules based on group silence thresholds — see which rules are currently firing |
-| **Settings** | Environment configuration viewer |
-| **Models** | Configured AI models (Claude, MiniMax, Qwen) with auth status |
-| **Skills** | Installed agent skills |
-
-### UI controls
-
-- **Auto-refresh** — select refresh interval (off / 10s / 30s / 1min / 5min)
-- **Dark / Light theme** — toggle in the header, persisted in `localStorage`
-- **Language** — switch between Chinese (中文) and English (EN), persisted in `localStorage`
-
 ## Project Structure
 
 ```
 BioClaw/
-├── bioclaw_logo.jpg           # Project logo
-├── ExampleTask/
-│   ├── ExampleTask.md         # 6 demo prompts with descriptions
-│   ├── 1.jpg                  # Workspace triage demo
-│   ├── 2.jpg                  # PubMed search demo
-│   ├── 3.jpg                  # Protein structure demo
-│   ├── 4.jpg                  # BLAST search demo
-│   ├── 5.jpg                  # FastQC QC demo
-│   └── 6.jpg                  # Volcano plot demo
+├── src/
+│   ├── index.ts              # Orchestrator: state, message loop, agent invocation
+│   ├── dashboard.ts          # Web dashboard & chat API server
+│   ├── dashboard.html        # Single-page dashboard & chat UI
+│   ├── channels/
+│   │   └── whatsapp.ts       # WhatsApp connection, auth, send/receive
+│   ├── container-runner.ts   # Spawns agent containers with mounts
+│   ├── task-scheduler.ts     # Runs scheduled tasks
+│   ├── router.ts             # Message formatting and outbound routing
+│   ├── config.ts             # Trigger pattern, paths, intervals
+│   ├── db.ts                 # SQLite operations
+│   └── ipc.ts                # IPC watcher and task processing
+├── container/
+│   ├── Dockerfile            # Agent container with bio tools
+│   ├── build.sh              # Container build script
+│   ├── agent-runner/         # In-container agent runner
+│   └── skills/               # Bio tool skill definitions (90+)
+├── groups/                   # Per-group memory and workspace (isolated)
+├── store/                    # WhatsApp auth and session data
+├── ExampleTask/              # Demo prompts and screenshots
 └── README.md
+```
+
+## Development
+
+```bash
+npm run dev          # Run with hot reload
+npm run build        # Compile TypeScript
+./container/build.sh # Rebuild agent container (with bio tools)
 ```
 
 ## Citation

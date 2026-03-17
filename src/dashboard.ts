@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 
 import {
   CONTAINER_IMAGE,
+  GROUPS_DIR,
   MINIMAX_API_KEY,
   MINIMAX_BASE_URL,
   MINIMAX_MODEL,
@@ -13,15 +14,22 @@ import {
   QWEN_AUTH_TOKEN,
   QWEN_MODEL,
 } from './config.js';
+import { runContainerAgent, ContainerEvent } from './container-runner.js';
 import {
   deleteTask,
+  getActivityStats,
   getAllChats,
   getAllRegisteredGroups,
   getAllTasks,
+  getGroupMessageStats,
   getTaskRunLogs,
+  getTokenUsageByDay,
+  getTokenUsageSummary,
+  logTokenUsage,
   updateTask,
 } from './db.js';
 import { logger } from './logger.js';
+import { RegisteredGroup } from './types.js';
 
 const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../..');
 const LOG_FILE = path.join(PROJECT_ROOT, 'logs', 'bioclaw.log');
@@ -116,25 +124,33 @@ function getModels(): object[] {
   }
 
   const models: object[] = [];
+  const dotEnv = readEnvFile();
 
-  if (MINIMAX_MODEL) {
-    const spec = MODEL_SPECS[MINIMAX_MODEL] ?? { contextWindow: 1_000_000, maxOutput: 40_960, reasoning: true };
-    models.push({ id: 'minimax', name: MINIMAX_MODEL, provider: 'MiniMax',
-      endpoint: MINIMAX_BASE_URL, agentCount: agentCounts['minimax'] ?? 0,
-      configured: !!MINIMAX_API_KEY, ...spec });
+  // Effective values: prefer process.env, fallback to .env file, then config defaults
+  const effectiveMiniMaxKey = process.env.MINIMAX_API_KEY || dotEnv['MINIMAX_API_KEY'] || MINIMAX_API_KEY;
+  const effectiveMiniMaxBase = process.env.MINIMAX_BASE_URL || dotEnv['MINIMAX_BASE_URL'] || MINIMAX_BASE_URL;
+  const effectiveMiniMaxModel = process.env.MINIMAX_MODEL || dotEnv['MINIMAX_MODEL'] || MINIMAX_MODEL;
+  const effectiveQwenBase = process.env.QWEN_API_BASE || dotEnv['QWEN_API_BASE'] || QWEN_API_BASE;
+  const effectiveQwenToken = process.env.QWEN_AUTH_TOKEN || dotEnv['QWEN_AUTH_TOKEN'] || QWEN_AUTH_TOKEN;
+  const effectiveQwenModel = process.env.QWEN_MODEL || dotEnv['QWEN_MODEL'] || QWEN_MODEL;
+
+  if (effectiveMiniMaxModel) {
+    const spec = MODEL_SPECS[effectiveMiniMaxModel] ?? { contextWindow: 1_000_000, maxOutput: 40_960, reasoning: true };
+    models.push({ id: 'minimax', name: effectiveMiniMaxModel, provider: 'MiniMax',
+      endpoint: effectiveMiniMaxBase, agentCount: agentCounts['minimax'] ?? 0,
+      configured: !!effectiveMiniMaxKey, ...spec });
   }
 
-  if (QWEN_MODEL) {
-    const displayName = QWEN_MODEL.split('/').pop() ?? QWEN_MODEL;
-    models.push({ id: 'qwen', name: displayName, fullModel: QWEN_MODEL, provider: 'Qwen (Local)',
-      endpoint: QWEN_API_BASE, agentCount: agentCounts['qwen'] ?? 0,
-      configured: !!QWEN_API_BASE,
+  if (effectiveQwenModel) {
+    const displayName = effectiveQwenModel.split('/').pop() ?? effectiveQwenModel;
+    models.push({ id: 'qwen', name: displayName, fullModel: effectiveQwenModel, provider: 'Qwen (Local)',
+      endpoint: effectiveQwenBase, agentCount: agentCounts['qwen'] ?? 0,
+      configured: !!(effectiveQwenBase && effectiveQwenToken),
       contextWindow: 32_768, maxOutput: 8_192, reasoning: false });
   }
 
   const claudeModel = process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-6';
   const claudeSpec = MODEL_SPECS[claudeModel] ?? { contextWindow: 200_000, maxOutput: 32_768, reasoning: true };
-  const dotEnv = readEnvFile();
   const hasClaudeAuth = !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY || dotEnv['CLAUDE_CODE_OAUTH_TOKEN'] || dotEnv['ANTHROPIC_API_KEY']);
   const imageTag = CONTAINER_IMAGE.split(':')[1] ?? 'latest';
   models.push({ id: 'claude', name: claudeModel, provider: 'Anthropic (Claude Code)',
@@ -147,11 +163,16 @@ function getModels(): object[] {
 async function testModel(modelType: string, prompt: string): Promise<object> {
   const start = Date.now();
   try {
+    const envVars = readEnvFile();
     let apiBase: string, apiKey: string, model: string;
     if (modelType === 'minimax') {
-      apiBase = MINIMAX_BASE_URL; apiKey = MINIMAX_API_KEY; model = MINIMAX_MODEL;
+      apiBase = process.env.MINIMAX_BASE_URL || envVars['MINIMAX_BASE_URL'] || MINIMAX_BASE_URL;
+      apiKey = process.env.MINIMAX_API_KEY || envVars['MINIMAX_API_KEY'] || MINIMAX_API_KEY;
+      model = process.env.MINIMAX_MODEL || envVars['MINIMAX_MODEL'] || MINIMAX_MODEL;
     } else if (modelType === 'qwen') {
-      apiBase = QWEN_API_BASE; apiKey = QWEN_AUTH_TOKEN; model = QWEN_MODEL;
+      apiBase = process.env.QWEN_API_BASE || envVars['QWEN_API_BASE'] || QWEN_API_BASE;
+      apiKey = process.env.QWEN_AUTH_TOKEN || envVars['QWEN_AUTH_TOKEN'] || QWEN_AUTH_TOKEN;
+      model = process.env.QWEN_MODEL || envVars['QWEN_MODEL'] || QWEN_MODEL;
     } else {
       return { ok: false, response: 'Claude cannot be tested directly (runs in container)', durationMs: 0 };
     }
@@ -165,8 +186,13 @@ async function testModel(modelType: string, prompt: string): Promise<object> {
     const data = await res.json() as any;
     const text = data.choices?.[0]?.message?.content ?? data.error?.message ?? JSON.stringify(data).slice(0, 300);
     const usage = data.usage ?? {};
+    const promptTokens = usage.prompt_tokens ?? 0;
+    const completionTokens = usage.completion_tokens ?? 0;
+    if (promptTokens || completionTokens) {
+      logTokenUsage({ group_folder: 'dashboard', agent_type: modelType, input_tokens: promptTokens, output_tokens: completionTokens, source: 'test', duration_ms: Date.now() - start });
+    }
     return { ok: res.ok, response: text, durationMs: Date.now() - start,
-      promptTokens: usage.prompt_tokens ?? 0, completionTokens: usage.completion_tokens ?? 0 };
+      promptTokens, completionTokens };
   } catch (err: any) {
     return { ok: false, response: err.message, durationMs: Date.now() - start };
   }
@@ -311,6 +337,13 @@ async function handleApi(
     return true;
   }
 
+  if (pathname === '/api/token-usage' && req.method === 'GET') {
+    const url = new URL(req.url || '/', 'http://localhost');
+    const days = parseInt(url.searchParams.get('days') || '14', 10);
+    json(res, { daily: getTokenUsageByDay(days), summary: getTokenUsageSummary(days) });
+    return true;
+  }
+
   if (pathname === '/api/skills' && req.method === 'GET') {
     json(res, getSkills());
     return true;
@@ -341,6 +374,149 @@ async function handleApi(
   const taskLogs = pathname.match(/^\/api\/task-logs\/([^/]+)$/);
   if (taskLogs && req.method === 'GET') {
     json(res, getTaskRunLogs(taskLogs[1], 50));
+    return true;
+  }
+
+  if (pathname === '/api/groups/stats' && req.method === 'GET') {
+    json(res, getGroupMessageStats());
+    return true;
+  }
+
+  if (pathname === '/api/activity' && req.method === 'GET') {
+    const url = new URL(req.url || '/', 'http://localhost');
+    const days = parseInt(url.searchParams.get('days') || '14', 10);
+    json(res, getActivityStats(days));
+    return true;
+  }
+
+  // Alerts — stored in a simple JSON file
+  const ALERTS_FILE = path.join(PROJECT_ROOT, 'data', 'alerts.json');
+
+  if (pathname === '/api/alerts' && req.method === 'GET') {
+    try {
+      const data = fs.existsSync(ALERTS_FILE) ? JSON.parse(fs.readFileSync(ALERTS_FILE, 'utf-8')) : { rules: [] };
+      json(res, data);
+    } catch { json(res, { rules: [] }); }
+    return true;
+  }
+
+  if (pathname === '/api/alerts' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req));
+    fs.mkdirSync(path.dirname(ALERTS_FILE), { recursive: true });
+    fs.writeFileSync(ALERTS_FILE, JSON.stringify(body, null, 2));
+    json(res, { ok: true });
+    return true;
+  }
+
+  if (pathname === '/api/alerts/status' && req.method === 'GET') {
+    const firing: Array<{ rule: string; group: string; lastMsg: string }> = [];
+    try {
+      const alertData = fs.existsSync(ALERTS_FILE) ? JSON.parse(fs.readFileSync(ALERTS_FILE, 'utf-8')) : { rules: [] };
+      const rules = alertData.rules || [];
+      if (rules.length > 0) {
+        const groupStats = getGroupMessageStats();
+        const groups = getAllRegisteredGroups();
+        for (const rule of rules) {
+          if (!rule.enabled) continue;
+          const thresholdMs = (rule.hours || 24) * 60 * 60 * 1000;
+          for (const stat of groupStats) {
+            if (!groups[stat.chat_jid]) continue;
+            const lastMsgTime = new Date(stat.last_msg).getTime();
+            if (Date.now() - lastMsgTime > thresholdMs) {
+              firing.push({ rule: rule.name, group: groups[stat.chat_jid].name, lastMsg: stat.last_msg });
+            }
+          }
+        }
+      }
+    } catch { /* no alerts */ }
+    json(res, { firing });
+    return true;
+  }
+
+  // Chat endpoint — streams SSE: text/tool_call/tool_result/session/done/error events
+  if (pathname === '/api/chat' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req));
+    const { message, sessionId, groupFolder, attachments } = body as {
+      message: string;
+      sessionId?: string;
+      groupFolder?: string;
+      attachments?: Array<{ name: string; data: string; mime: string; fileType?: string }>;
+    };
+
+    // Resolve group and agent type
+    const groupKey = groupFolder || 'dashboard';
+    const allGroups = getAllRegisteredGroups();
+    const registeredGroup = allGroups[groupKey];
+    const folder = registeredGroup?.folder || groupKey;
+    const agentType: 'claude' | 'minimax' | 'qwen' = registeredGroup?.agentType || 'claude';
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.flushHeaders?.();
+
+    const sendEvent = (event: object) => {
+      try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* client disconnected */ }
+    };
+
+    try {
+      // All agent types go through the container runner
+      const group: RegisteredGroup = registeredGroup || {
+        name: folder,
+        folder,
+        trigger: '',
+        added_at: new Date().toISOString(),
+      };
+      sendEvent({ type: 'status', text: 'Starting agent...' });
+
+      // Save attached images/files to group folder so container can access them
+      let prompt = message;
+      if (attachments?.length) {
+        const groupDir = path.join(GROUPS_DIR, group.folder);
+        fs.mkdirSync(groupDir, { recursive: true });
+        const savedFiles: string[] = [];
+        for (const att of attachments) {
+          if (att.data?.startsWith('data:')) {
+            const base64 = att.data.split(',')[1] || '';
+            const buf = Buffer.from(base64, 'base64');
+            const safeName = att.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const filePath = path.join(groupDir, safeName);
+            fs.writeFileSync(filePath, buf);
+            savedFiles.push(safeName);
+          }
+        }
+        if (savedFiles.length) {
+          prompt += '\n\nAttached files saved to /workspace/group/: ' + savedFiles.join(', ') + '\nPlease read and analyze these files.';
+        }
+      }
+
+      await runContainerAgent(
+        group,
+        {
+          prompt,
+          sessionId: sessionId || undefined,
+          groupFolder: group.folder,
+          chatJid: 'dashboard',
+          isMain: false,
+        },
+        () => { /* noop — no GroupQueue tracking needed for dashboard */ },
+        async (output) => {
+          if (output.result && output.result !== 'No response requested.') sendEvent({ type: 'text', text: output.result });
+          if (output.newSessionId) sendEvent({ type: 'session', sessionId: output.newSessionId });
+          if (output.status === 'error' && output.error) sendEvent({ type: 'error', message: output.error });
+        },
+        (event: ContainerEvent) => {
+          sendEvent(event);
+        },
+      );
+      sendEvent({ type: 'done' });
+    } catch (err: any) {
+      sendEvent({ type: 'error', message: err.message || String(err) });
+    }
+
+    res.end();
     return true;
   }
 
@@ -401,7 +577,8 @@ function handleRequest(
   const pathname = url.pathname;
 
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, DELETE');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);

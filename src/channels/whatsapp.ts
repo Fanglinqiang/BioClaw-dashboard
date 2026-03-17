@@ -38,6 +38,7 @@ export class WhatsAppChannel implements Channel {
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
+  private connectReject?: (err: Error) => void;
 
   private opts: WhatsAppChannelOpts;
 
@@ -47,6 +48,7 @@ export class WhatsAppChannel implements Channel {
 
   async connect(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      this.connectReject = reject;
       this.connectInternal(resolve).catch(reject);
     });
   }
@@ -87,7 +89,8 @@ export class WhatsAppChannel implements Channel {
         exec(
           `osascript -e 'display notification "${msg}" with title "BioClaw" sound name "Basso"'`,
         );
-        setTimeout(() => process.exit(1), 1000);
+        this.connectReject?.(new Error(msg));
+        this.connectReject = undefined;
       }
 
       if (connection === 'close') {
