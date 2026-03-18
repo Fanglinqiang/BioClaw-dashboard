@@ -34,6 +34,17 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: TokenUsageSummary;
+}
+
+interface TokenUsageSummary {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
+  num_turns: number;
 }
 
 interface SessionEntry {
@@ -539,11 +550,23 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      const resultMsg = message as any;
+      // Build per-result usage from this result message
+      const resultUsage: TokenUsageSummary = {
+        input_tokens: resultMsg.usage?.input_tokens || 0,
+        output_tokens: resultMsg.usage?.output_tokens || 0,
+        cache_read_tokens: resultMsg.usage?.cache_read_input_tokens || 0,
+        cache_creation_tokens: resultMsg.usage?.cache_creation_input_tokens || 0,
+        cost_usd: resultMsg.total_cost_usd || 0,
+        duration_ms: resultMsg.duration_ms || 0,
+        num_turns: resultMsg.num_turns || 0,
+      };
+      log(`Result #${resultCount}: subtype=${message.subtype} tokens=${resultUsage.input_tokens}/${resultUsage.output_tokens} cost=$${resultUsage.cost_usd.toFixed(4)}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        usage: (resultUsage.input_tokens > 0 || resultUsage.output_tokens > 0) ? resultUsage : undefined,
       });
     }
   }
@@ -646,6 +669,7 @@ async function main(): Promise<void> {
     });
     process.exit(1);
   }
+
 }
 
 main();

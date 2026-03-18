@@ -51,6 +51,17 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: TokenUsageSummary;
+}
+
+export interface TokenUsageSummary {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
+  num_turns: number;
 }
 
 export interface ContainerEvent {
@@ -324,6 +335,7 @@ export async function runContainerAgent(
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
     let newSessionId: string | undefined;
+    let lastUsage: TokenUsageSummary | undefined;
     let outputChain = Promise.resolve();
 
     container.stdout.on('data', (data) => {
@@ -380,6 +392,9 @@ export async function runContainerAgent(
               const parsed: ContainerOutput = JSON.parse(jsonStr);
               if (parsed.newSessionId) {
                 newSessionId = parsed.newSessionId;
+              }
+              if (parsed.usage) {
+                lastUsage = parsed.usage;
               }
               hadStreamingOutput = true;
               // Activity detected — reset the hard timeout
@@ -479,6 +494,7 @@ export async function runContainerAgent(
               status: 'success',
               result: null,
               newSessionId,
+              usage: lastUsage,
             });
           });
           return;
@@ -579,13 +595,14 @@ export async function runContainerAgent(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId },
+            { group: group.name, duration, newSessionId, usage: lastUsage },
             'Container completed (streaming mode)',
           );
           resolve({
             status: 'success',
             result: null,
             newSessionId,
+            usage: lastUsage,
           });
         });
         return;
