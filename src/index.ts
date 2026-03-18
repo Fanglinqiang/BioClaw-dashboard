@@ -21,10 +21,20 @@ import {
   WECOM_CORP_ID,
   WECOM_CORP_SECRET,
   WECOM_AGENT_ID,
+  FEISHU_APP_ID,
+  FEISHU_APP_SECRET,
+  FEISHU_DEFAULT_FOLDER,
+  FEISHU2_APP_ID,
+  FEISHU2_APP_SECRET,
+  FEISHU2_DEFAULT_FOLDER,
+  FEISHU3_APP_ID,
+  FEISHU3_APP_SECRET,
+  FEISHU3_DEFAULT_FOLDER,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { TelegramChannel } from './channels/telegram.js';
 import { WeComChannel } from './channels/wecom.js';
+import { FeishuChannel } from './channels/feishu.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -40,6 +50,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  logTokenUsage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -115,7 +126,7 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:') || c.jid.startsWith('wc')))
+    .filter((c) => c.jid !== '__group_sync__' && (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:') || c.jid.startsWith('wc') || c.jid.startsWith('fs')))
     .map((c) => ({
       jid: c.jid,
       name: c.name,
@@ -263,12 +274,27 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID and log token usage from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
+        }
+        // Log token usage as soon as we receive it (don't wait for container exit)
+        if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
+          logTokenUsage({
+            group_folder: group.folder,
+            agent_type: 'claude',
+            input_tokens: output.usage.input_tokens,
+            output_tokens: output.usage.output_tokens,
+            cache_read_tokens: output.usage.cache_read_tokens,
+            cache_creation_tokens: output.usage.cache_creation_tokens,
+            cost_usd: output.usage.cost_usd,
+            duration_ms: output.usage.duration_ms,
+            num_turns: output.usage.num_turns,
+            source: 'message',
+          });
         }
         await onOutput(output);
       }
@@ -516,6 +542,38 @@ async function main(): Promise<void> {
     const wecom3 = new WeComChannel(WECOM3_BOT_ID, WECOM3_SECRET, { ...channelOpts, jidPrefix: 'wc3:', corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
     channels.push(wecom3);
     await wecom3.connect();
+  }
+
+  if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
+    const feishu = new FeishuChannel(FEISHU_APP_ID, FEISHU_APP_SECRET, {
+      ...channelOpts,
+      defaultFolder: FEISHU_DEFAULT_FOLDER || undefined,
+      onRegisterGroup: FEISHU_DEFAULT_FOLDER ? registerGroup : undefined,
+    });
+    channels.push(feishu);
+    await feishu.connect();
+  }
+
+  if (FEISHU2_APP_ID && FEISHU2_APP_SECRET) {
+    const feishu2 = new FeishuChannel(FEISHU2_APP_ID, FEISHU2_APP_SECRET, {
+      ...channelOpts,
+      jidPrefix: 'fs2:',
+      defaultFolder: FEISHU2_DEFAULT_FOLDER || undefined,
+      onRegisterGroup: FEISHU2_DEFAULT_FOLDER ? registerGroup : undefined,
+    });
+    channels.push(feishu2);
+    await feishu2.connect();
+  }
+
+  if (FEISHU3_APP_ID && FEISHU3_APP_SECRET) {
+    const feishu3 = new FeishuChannel(FEISHU3_APP_ID, FEISHU3_APP_SECRET, {
+      ...channelOpts,
+      jidPrefix: 'fs3:',
+      defaultFolder: FEISHU3_DEFAULT_FOLDER || undefined,
+      onRegisterGroup: FEISHU3_DEFAULT_FOLDER ? registerGroup : undefined,
+    });
+    channels.push(feishu3);
+    await feishu3.connect();
   }
 
   // Start subsystems (independently of connection handler)

@@ -80,3 +80,14 @@ export const WECOM3_SECRET = process.env.WECOM3_SECRET || "";
 export const WECOM_CORP_ID = process.env.WECOM_CORP_ID || "";
 export const WECOM_CORP_SECRET = process.env.WECOM_CORP_SECRET || "";
 export const WECOM_AGENT_ID = parseInt(process.env.WECOM_AGENT_ID || "0", 10);
+
+// Feishu / Lark (optional — set via env or .env file)
+export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
+export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+export const FEISHU_DEFAULT_FOLDER = process.env.FEISHU_DEFAULT_FOLDER || 'main';
+export const FEISHU2_APP_ID = process.env.FEISHU2_APP_ID || '';
+export const FEISHU2_APP_SECRET = process.env.FEISHU2_APP_SECRET || '';
+export const FEISHU2_DEFAULT_FOLDER = process.env.FEISHU2_DEFAULT_FOLDER || '';
+export const FEISHU3_APP_ID = process.env.FEISHU3_APP_ID || '';
+export const FEISHU3_APP_SECRET = process.env.FEISHU3_APP_SECRET || '';
+export const FEISHU3_DEFAULT_FOLDER = process.env.FEISHU3_DEFAULT_FOLDER || '';

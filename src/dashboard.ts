@@ -509,6 +509,21 @@ async function handleApi(
           if (output.result && output.result !== 'No response requested.' && !hadTextEvent) sendEvent({ type: 'text', text: output.result });
           if (output.newSessionId) sendEvent({ type: 'session', sessionId: output.newSessionId });
           if (output.status === 'error' && output.error) sendEvent({ type: 'error', message: output.error });
+          // Log token usage as soon as we receive it from the container (don't wait for exit)
+          if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
+            logTokenUsage({
+              group_folder: group.folder,
+              agent_type: 'claude',
+              input_tokens: output.usage.input_tokens,
+              output_tokens: output.usage.output_tokens,
+              cache_read_tokens: output.usage.cache_read_tokens,
+              cache_creation_tokens: output.usage.cache_creation_tokens,
+              cost_usd: output.usage.cost_usd,
+              duration_ms: output.usage.duration_ms,
+              num_turns: output.usage.num_turns,
+              source: 'dashboard',
+            });
+          }
         },
         (event: ContainerEvent) => {
           if (event.type === 'text' || (event.type === 'tool_call' && event.tool?.endsWith('send_message'))) {
