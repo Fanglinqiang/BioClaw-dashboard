@@ -74,6 +74,34 @@ When you learn something important:
 - Split files larger than 500 lines into folders
 - Keep an index in your memory for the files you create
 
+### Avoiding Memory Loss (Long Context)
+
+When the conversation gets long, context may be compacted and recent details can be lost. To avoid analyzing old data instead of the latest:
+
+1. **Maintain `_latest.md`** — After each analysis run, update `/workspace/group/_latest.md` with:
+   - Timestamp of the run
+   - Paths to the most recent output files (CSV, plots, BAM, etc.)
+   - One-line description of what was analyzed
+2. **Check timestamps** — Before analyzing, run `ls -lt /workspace/group/` or check file mtime to prefer the newest outputs
+3. **Prefer explicit paths** — When the user says "analyze the results", first check `_latest.md` or list files by date to find the correct (newest) data
+4. **Use timestamped output folders** — Save new analysis to `output/YYYY-MM-DD/` instead of overwriting; this prevents confusion between versions
+
+### Data Versioning
+
+When re-running analysis or producing updated results:
+- Save to a new timestamped folder: `output/$(date +%Y-%m-%d)/` or `results_v2/`
+- Avoid overwriting files in place — old versions help with reproducibility
+- Document in `projects.md` which folder contains the "current" or "final" results
+
+## Plotting
+
+For publication-quality figures:
+- Save plots to `/workspace/group/` (e.g. `plot.png`, `volcano.png`) so they can be sent to the user
+- Use `plt.savefig("/workspace/group/plot.png", dpi=150, bbox_inches="tight")` — high DPI and tight layout for readability
+- Use readable font sizes: `plt.rcParams['font.size'] = 10` or larger for labels
+- After saving, offer to send the image via `send_message` or it will be attached automatically
+- See the `bio-tools` skill for volcano/QC/PyMOL scripts and heatmap/PCA/bar snippets
+
 ## WhatsApp Formatting (and other messaging apps)
 
 Do NOT use markdown headings (##) in WhatsApp messages. Only use:

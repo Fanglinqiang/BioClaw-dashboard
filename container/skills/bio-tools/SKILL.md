@@ -101,5 +101,156 @@ print(f"LogP: {Descriptors.MolLogP(mol):.2f}")
 
 - For remote BLAST against NCBI, use `Bio.Blast.NCBIWWW.qblast()` — this sends the query over the network
 - For large files, prefer streaming with `SeqIO.parse()` over `SeqIO.read()`
-- Save plots to files (`plt.savefig("/workspace/group/plot.png")`) since there's no display
+- **Plots**: Save to `/workspace/group/plot.png` with `dpi=150, bbox_inches="tight"`. For publication-ready figures, use `cnsplots` or `pyGenomeTracks` (see below).
 - Write output files to `/workspace/group/` so the user can access them
+- **Versioning**: When re-running analysis, save to `output/YYYY-MM-DD/` to avoid overwriting; update `_latest.md` with paths to newest outputs
+
+## Reusable Figure Templates
+
+Prefer these built-in scripts when creating common BioClaw figures, instead of writing one-off plotting code from scratch.
+
+### Volcano Plot Template
+Path:
+
+```bash
+/home/node/.claude/skills/bio-tools/volcano_plot_template.py
+```
+
+Example:
+
+```bash
+python /home/node/.claude/skills/bio-tools/volcano_plot_template.py \
+  --input /workspace/group/counts.csv \
+  --output /workspace/group/volcano_plot.png \
+  --title "Differential Expression Volcano Plot"
+```
+
+Expected columns by default: `gene`, `log2FC`, `pvalue`
+
+### QC Summary Plot Template
+Path:
+
+```bash
+/home/node/.claude/skills/bio-tools/qc_summary_plot_template.py
+```
+
+Example:
+
+```bash
+python /home/node/.claude/skills/bio-tools/qc_summary_plot_template.py \
+  --input /workspace/group/qc_metrics.csv \
+  --output /workspace/group/qc_summary.png \
+  --title "Sequencing QC Summary"
+```
+
+Expected sample column by default: `sample`
+
+Useful metric columns: `total_reads`, `q30_pct`, `gc_pct`, `duplication_pct`
+
+### PyMOL Render Template
+Path:
+
+```bash
+/home/node/.claude/skills/bio-tools/pymol_render_template.py
+```
+
+Examples:
+
+```bash
+python /home/node/.claude/skills/bio-tools/pymol_render_template.py \
+  --input 1M17 \
+  --output /workspace/group/1m17_render.png \
+  --highlight-selection "resn AQ4"
+```
+
+```bash
+python /home/node/.claude/skills/bio-tools/pymol_render_template.py \
+  --input /workspace/group/structure.pdb \
+  --output /workspace/group/structure_render.png \
+  --style cartoon
+```
+
+### Inline Plot Snippets (Heatmap, PCA, Bar)
+
+When the built-in scripts don't fit, use these patterns. Save to `/workspace/group/<name>.png`.
+
+**Heatmap** (rows=genes, columns=samples):
+```python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+df = pd.read_csv("/workspace/group/expression.csv", index_col=0)
+sns.heatmap(np.log1p(df).iloc[:50], cmap='RdBu_r', center=0)
+plt.savefig("/workspace/group/heatmap.png", dpi=150, bbox_inches="tight")
+```
+
+**PCA scatter** (columns: PC1, PC2, condition):
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+coords = pd.read_csv("/workspace/group/pca_coords.csv")
+for c in coords['condition'].unique():
+    sub = coords[coords['condition'] == c]
+    plt.scatter(sub['PC1'], sub['PC2'], label=c)
+plt.legend()
+plt.savefig("/workspace/group/pca.png", dpi=150, bbox_inches="tight")
+```
+
+**Bar plot** (columns: gene, count):
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+df = pd.read_csv("/workspace/group/top_genes.csv").head(20).sort_values('count', ascending=True)
+plt.barh(df['gene'], df['count'])
+plt.savefig("/workspace/group/barplot.png", dpi=150, bbox_inches="tight")
+```
+
+## Publication-Ready Plots (cnsplots)
+
+**cnsplots** provides Cell/Nature/Science journal-style figures. Use for volcano, bar, box, violin, heatmap, etc.
+
+```python
+import cnsplots as cns
+import pandas as pd
+import numpy as np
+
+# Volcano plot (columns: gene, log2FC, pvalue or padj)
+df = pd.read_csv("/workspace/group/counts.csv")
+df["-log10(p)"] = -np.log10(df["pvalue"].clip(lower=1e-300))  # or use padj
+cns.figure(height=200, width=200)
+cns.volcanoplot(data=df, x="log2FC", y="-log10(p)", symbol="gene")
+cns.savefig("/workspace/group/volcano_cns.png")
+```
+
+```python
+# Boxplot with Mann-Whitney test
+cns.figure(150, 150)
+cns.boxplot(data=df, x="group", y="value", pairs="all")
+cns.savefig("/workspace/group/boxplot.png")
+```
+
+```python
+# Heatmap from AnnData (single-cell)
+import scanpy as sc
+adata = sc.read_h5ad("/workspace/group/data.h5ad")
+cns.figure(200, 200)
+cns.heatmapplot(adata, row_cluster=True, col_cluster=True, cmap="bwr")
+cns.savefig("/workspace/group/heatmap_cns.png")
+```
+
+See [cnsplots docs](https://cnsplots.farid.one/) for more: violin, scatter, survival, ROC, GSEA, etc.
+
+## Genome Browser Tracks (pyGenomeTracks)
+
+**pyGenomeTracks** plots genome browser tracks (BED, BigWig, GTF, etc.). BEDTools must be installed (already in container).
+
+```bash
+# 1. Create config from your files
+make_tracks_file --trackFiles /workspace/group/peaks.bed /workspace/group/coverage.bw -o /workspace/group/tracks.ini
+
+# 2. Plot a region (chr:start-end)
+pyGenomeTracks --tracks /workspace/group/tracks.ini --region chr1:1000000-4000000 -o /workspace/group/genome_tracks.png --dpi 150
+```
+
+Supported file types: `.bed`, `.bw` (bigwig), `.gtf`, `.gff`, `.arcs`, `.links`. Edit `tracks.ini` to adjust track colors, heights, titles.

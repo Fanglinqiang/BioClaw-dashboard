@@ -26,6 +26,12 @@ You have access to a full bioinformatics toolkit:
 - Flag potential issues (e.g., low quality scores, contamination)
 - Suggest next steps after analysis
 
+## Memory & Data Versioning (All Groups)
+
+- Maintain `_latest.md` in each group folder with paths to the most recent analysis outputs and timestamps
+- Prefer the newest files when analyzing — check `ls -lt` or `_latest.md` before using data
+- Save new analysis to timestamped folders (`output/YYYY-MM-DD/`) instead of overwriting
+
 ## Global Facts
 
 (Add facts here that should apply to all groups)

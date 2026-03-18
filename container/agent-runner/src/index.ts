@@ -16,8 +16,11 @@
 
 import fs from 'fs';
 import path from 'path';
+import { exec as execChildProcess } from 'child_process';
+import { randomUUID } from 'crypto';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
+import { promisify } from 'util';
 
 interface ContainerInput {
   prompt: string;
@@ -68,6 +71,54 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const IPC_DIR = '/workspace/ipc';
+const IPC_MESSAGES_DIR = path.join(IPC_DIR, 'messages');
+const IPC_TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const IPC_FILES_DIR = path.join(IPC_DIR, 'files');
+const BASH_TIMEOUT_MS = 5 * 60 * 1000;
+const BASH_MAX_OUTPUT_CHARS = 12000;
+const OPENAI_TOOL_MAX_ITERATIONS = Math.max(
+  1,
+  parseInt(process.env.OPENAI_TOOL_MAX_ITERATIONS || '48', 10) || 48,
+);
+const execAsync = promisify(execChildProcess);
+
+type ProviderKind = 'anthropic' | 'openai-compatible';
+
+interface ProviderConfig {
+  provider: ProviderKind;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
+interface OpenAIChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content?: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+}
+
+interface OpenAIChatResponse {
+  choices?: Array<{
+    message?: OpenAIChatMessage & { content?: string | Array<{ type?: string; text?: string }> | null };
+    finish_reason?: string | null;
+  }>;
+  error?: { message?: string };
+}
+
+/** Normalize API content (string or array of blocks) to string. */
+function normalizeContent(
+  content: string | Array<{ type?: string; text?: string }> | null | undefined,
+): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map((c) => c.text || '').join('');
+  return '';
+}
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -145,6 +196,125 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
+function truncateOutput(text: string | undefined | null, maxChars = BASH_MAX_OUTPUT_CHARS): string {
+  if (!text) return '';
+  return text.length > maxChars ? `${text.slice(0, maxChars)}\n... [truncated]` : text;
+}
+
+function writeIpcFile(dir: string, data: object): string {
+  fs.mkdirSync(dir, { recursive: true });
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const filePath = path.join(dir, filename);
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2));
+  fs.renameSync(tmpPath, filePath);
+  return filename;
+}
+
+function queueIpcMessage(chatJid: string, groupFolder: string, text: string): string {
+  return writeIpcFile(IPC_MESSAGES_DIR, {
+    type: 'message',
+    chatJid,
+    text,
+    groupFolder,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function queueIpcImage(chatJid: string, groupFolder: string, filePath: string, caption?: string): string {
+  const ext = path.extname(filePath) || '.png';
+  fs.mkdirSync(IPC_FILES_DIR, { recursive: true });
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+  const destPath = path.join(IPC_FILES_DIR, filename);
+  fs.copyFileSync(filePath, destPath);
+
+  writeIpcFile(IPC_MESSAGES_DIR, {
+    type: 'image',
+    chatJid,
+    filePath: `files/${filename}`,
+    caption: caption || undefined,
+    groupFolder,
+    timestamp: new Date().toISOString(),
+  });
+
+  return filename;
+}
+
+function queueScheduledTask(
+  containerInput: ContainerInput,
+  args: { prompt: string; schedule_type: string; schedule_value: string; context_mode?: string; target_group_jid?: string },
+): string {
+  return writeIpcFile(IPC_TASKS_DIR, {
+    type: 'schedule_task',
+    prompt: args.prompt,
+    schedule_type: args.schedule_type,
+    schedule_value: args.schedule_value,
+    context_mode: args.context_mode || 'group',
+    targetJid: args.target_group_jid || containerInput.chatJid,
+    createdBy: containerInput.groupFolder,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function resolveProviderConfig(env: Record<string, string | undefined>): ProviderConfig {
+  const requestedProvider = (env.MODEL_PROVIDER || '').trim().toLowerCase();
+  const openRouterKey = env.OPENROUTER_API_KEY;
+  const openCompatibleKey = env.OPENAI_COMPATIBLE_API_KEY;
+
+  if (requestedProvider === 'anthropic' || (!requestedProvider && !openRouterKey && !openCompatibleKey)) {
+    return { provider: 'anthropic' };
+  }
+
+  const provider = requestedProvider === 'openrouter' || requestedProvider === 'openai-compatible'
+    ? 'openai-compatible'
+    : (openRouterKey || openCompatibleKey ? 'openai-compatible' : 'anthropic');
+
+  if (provider === 'anthropic') {
+    return { provider };
+  }
+
+  return {
+    provider,
+    apiKey: openRouterKey || openCompatibleKey,
+    baseUrl: env.OPENROUTER_BASE_URL || env.OPENAI_COMPATIBLE_BASE_URL || 'https://openrouter.ai/api/v1',
+    model: env.OPENROUTER_MODEL || env.OPENAI_COMPATIBLE_MODEL || 'openai/gpt-4.1-mini',
+  };
+}
+
+function getBioSystemPrompt(): string {
+  return [
+    '## BioClaw — Biology Research Assistant',
+    '',
+    'You are Bio, an AI biology research assistant running inside an isolated container.',
+    'You have full access to bioinformatics tools: BLAST+, SAMtools, BEDTools, BWA, minimap2, FastQC, seqtk, fastp, MultiQC, bcftools, tabix, pigz, salmon, kallisto, SRA Toolkit.',
+    'Python libraries: BioPython, pandas, NumPy, SciPy, matplotlib, seaborn, scikit-learn, RDKit, PyDESeq2, scanpy, pysam.',
+    '',
+    'When users ask biology questions, prefer running actual analysis over giving theoretical answers.',
+    'Use tools to produce real results. Prefer the Bash tool for running shell commands, Python scripts, and bioinformatics workflows.',
+    'Save output files to /workspace/group/ so users can access them.',
+    'When you generate an image file (such as PNG, JPG, or GIF), call the send_image tool so the user receives it in chat instead of only seeing a saved file path.',
+    "If you generate plots with Chinese labels via matplotlib, configure a Chinese-capable font first (try: 'Noto Sans CJK SC' or 'WenQuanYi Zen Hei') and set axes.unicode_minus=False to avoid missing glyphs and minus-sign issues.",
+    'Prioritize figures that look scientific, readable on a phone screen, and suitable for demos or slide decks.',
+    'Avoid overcrowded labels, tiny fonts, excessive legends, rainbow color noise, and default low-quality plotting styles.',
+    'Prefer clean layouts, restrained scientific color palettes, clear axis titles with units, and short informative titles.',
+    'Default plotting style guidance: use matplotlib/seaborn with dpi>=300, a generous figure size (usually at least 8x5 inches), tight layout, and large readable fonts.',
+    'If there are too many labels or points to annotate cleanly, annotate only the most important ones and keep the rest visually simple.',
+    'For publication-style plots, include only information that improves interpretation; do not clutter the image with long paragraphs of text.',
+    'Use these task-specific figure patterns when relevant:',
+    '- Volcano plots: balanced red/blue/gray palette, significance threshold lines, minimal labels on top hits only, and readable axis names.',
+    '- QC summary plots: compact multi-panel layout, consistent colors, short labels, and clear sample ordering.',
+    '- Protein structure renders: prefer clean cartoon/surface representations, high-resolution output, sensible orientation, and focused highlighting of the biologically relevant region.',
+    'Reusable built-in scripts are available and should be preferred for consistent output when they fit the task:',
+    '- /home/node/.claude/skills/bio-tools/volcano_plot_template.py',
+    '- /home/node/.claude/skills/bio-tools/qc_summary_plot_template.py',
+    '- /home/node/.claude/skills/bio-tools/pymol_render_template.py',
+    'For publication-ready figures (Cell/Nature/Science style): use cnsplots (volcano, box, heatmap, etc.). For genome browser tracks: use pyGenomeTracks with make_tracks_file + pyGenomeTracks.',
+    'Before sending an image, quickly sanity-check that labels are legible, colors are not confusing, and the figure communicates one clear message.',
+    'Keep messages concise and action-oriented, and mention important output file paths when relevant.',
+    '',
+  ].join('\n');
+}
+
 function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
   const projectDir = path.dirname(transcriptPath);
   const indexPath = path.join(projectDir, 'sessions-index.json');
@@ -167,8 +337,29 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
   return null;
 }
 
+/** Extract output file paths from transcript (for _latest.md snapshot before compaction). */
+function extractOutputPathsFromTranscript(content: string): string[] {
+  const re = /\/workspace\/group\/[^\s)"'\]<>]+\.(csv|tsv|png|jpg|jpeg|bam|sam|h5ad|pdf|txt)/gi;
+  const seen = new Set<string>();
+  const order: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const p = m[0];
+    if (!seen.has(p)) {
+      seen.add(p);
+      order.push(p);
+    } else {
+      order.splice(order.indexOf(p), 1);
+      order.push(p); // move to end (most recent)
+    }
+  }
+  return order;
+}
+
 /**
  * Archive the full transcript to conversations/ before compaction.
+ * Also writes _latest.md with output paths extracted from the transcript — helps
+ * preserve "latest analysis state" when context is compacted.
  */
 function createPreCompactHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -204,6 +395,24 @@ function createPreCompactHook(): HookCallback {
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
+
+      // Snapshot output paths for _latest.md — helps avoid analyzing old data after compaction
+      const outputPaths = extractOutputPathsFromTranscript(content);
+      if (outputPaths.length > 0 && fs.existsSync('/workspace/group')) {
+        const now = new Date().toISOString();
+        const latestContent = [
+          '# Latest outputs (auto-updated before compaction)',
+          '',
+          `Updated: ${now}`,
+          '',
+          '## Output files',
+          '',
+          ...outputPaths.map((p) => `- ${p}`),
+          '',
+        ].join('\n');
+        fs.writeFileSync('/workspace/group/_latest.md', latestContent);
+        log(`Updated _latest.md with ${outputPaths.length} output paths`);
+      }
     } catch (err) {
       log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -215,7 +424,12 @@ function createPreCompactHook(): HookCallback {
 // Secrets to strip from Bash tool subprocess environments.
 // These are needed by claude-code for API auth but should never
 // be visible to commands Kit runs.
-const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+const SECRET_ENV_VARS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'OPENROUTER_API_KEY',
+  'OPENAI_COMPATIBLE_API_KEY',
+];
 
 function createSanitizeBashHook(): HookCallback {
   return async (input, _toolUseId, _context) => {
@@ -419,20 +633,9 @@ async function runQuery(
   let resultCount = 0;
 
   // BioClaw: inject biology-specific system context
-  const bioSystemPrompt = [
-    '## BioClaw — Biology Research Assistant',
-    '',
-    'You are Bio, an AI biology research assistant running inside an isolated container.',
-    'You have full access to bioinformatics tools: BLAST+, SAMtools, BEDTools, BWA, minimap2, FastQC, seqtk.',
-    'Python libraries: BioPython, pandas, NumPy, SciPy, matplotlib, seaborn, scikit-learn, RDKit, PyDESeq2, scanpy, pysam.',
-    '',
-    'When users ask biology questions, prefer running actual analysis over giving theoretical answers.',
-    'Write and execute Python scripts or bash commands to produce real results.',
-    'Save output files to /workspace/group/ so users can access them.',
-    'When you generate an image file (such as PNG, JPG, or GIF), call mcp__bioclaw__send_image to send it to the user instead of only mentioning the saved file path in text.',
-    "If you generate plots with Chinese labels via matplotlib, configure a Chinese-capable font first (try: 'Noto Sans CJK SC' or 'WenQuanYi Zen Hei') and set axes.unicode_minus=False to avoid missing glyphs and minus-sign issues.",
-    '',
-  ].join('\n');
+  const bioSystemPrompt = getBioSystemPrompt()
+    .replace('send_image tool', 'mcp__bioclaw__send_image')
+    .replace('Use tools to produce real results. Prefer the Bash tool for running shell commands, Python scripts, and bioinformatics workflows.', 'Write and execute Python scripts or bash commands to produce real results.');
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
@@ -576,6 +779,247 @@ async function runQuery(
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
+function getOpenAICompatibleTools() {
+  return [
+    {
+      type: 'function',
+      function: {
+        name: 'bash',
+        description: 'Run a shell command inside the BioClaw container. Use this for bioinformatics tools, Python scripts, file inspection, and data processing.',
+        parameters: {
+          type: 'object',
+          properties: {
+            command: { type: 'string', description: 'Shell command to execute.' },
+          },
+          required: ['command'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'send_message',
+        description: 'Send a text message to the current chat while your analysis is still running.',
+        parameters: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'Message text to send.' },
+          },
+          required: ['text'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'send_image',
+        description: 'Send an image file from the container to the current chat.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string', description: 'Absolute image path inside the container.' },
+            caption: { type: 'string', description: 'Optional image caption.' },
+          },
+          required: ['file_path'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'schedule_task',
+        description: 'Schedule a recurring or one-time task for this chat.',
+        parameters: {
+          type: 'object',
+          properties: {
+            prompt: { type: 'string' },
+            schedule_type: { type: 'string', enum: ['cron', 'interval', 'once'] },
+            schedule_value: { type: 'string' },
+            context_mode: { type: 'string', enum: ['group', 'isolated'] },
+            target_group_jid: { type: 'string' },
+          },
+          required: ['prompt', 'schedule_type', 'schedule_value'],
+          additionalProperties: false,
+        },
+      },
+    },
+  ] as const;
+}
+
+async function runBashTool(command: string, env: Record<string, string | undefined>): Promise<string> {
+  const safeEnv = { ...env } as Record<string, string | undefined>;
+  for (const secretVar of SECRET_ENV_VARS) {
+    delete safeEnv[secretVar];
+  }
+
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd: '/workspace/group',
+      env: Object.fromEntries(
+        Object.entries(safeEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+      ),
+      timeout: BASH_TIMEOUT_MS,
+      maxBuffer: 10 * 1024 * 1024,
+      shell: '/bin/bash',
+    });
+
+    const combined = [stdout, stderr].filter(Boolean).join(stderr && stdout ? '\n' : '');
+    return truncateOutput(combined || 'Command completed with no output.');
+  } catch (err) {
+    const error = err as { stdout?: string; stderr?: string; message?: string };
+    const combined = [error.stdout, error.stderr, error.message].filter(Boolean).join('\n');
+    return `Command failed.\n${truncateOutput(combined || 'Unknown error.')}`;
+  }
+}
+
+async function executeOpenAIToolCall(
+  toolName: string,
+  rawArgs: string,
+  containerInput: ContainerInput,
+  env: Record<string, string | undefined>,
+): Promise<string> {
+  let args: Record<string, string> = {};
+  try {
+    args = rawArgs ? JSON.parse(rawArgs) : {};
+  } catch {
+    return `Invalid JSON tool arguments for ${toolName}: ${rawArgs}`;
+  }
+
+  switch (toolName) {
+    case 'bash':
+      if (!args.command) return 'Missing required argument: command';
+      return runBashTool(args.command, env);
+    case 'send_message':
+      if (!args.text) return 'Missing required argument: text';
+      queueIpcMessage(containerInput.chatJid, containerInput.groupFolder, args.text);
+      return 'Message queued for sending.';
+    case 'send_image':
+      if (!args.file_path) return 'Missing required argument: file_path';
+      if (!fs.existsSync(args.file_path)) return `File not found: ${args.file_path}`;
+      queueIpcImage(containerInput.chatJid, containerInput.groupFolder, args.file_path, args.caption);
+      return `Image queued for sending from ${args.file_path}`;
+    case 'schedule_task':
+      if (!args.prompt || !args.schedule_type || !args.schedule_value) {
+        return 'Missing one of required arguments: prompt, schedule_type, schedule_value';
+      }
+      queueScheduledTask(containerInput, {
+        prompt: args.prompt,
+        schedule_type: args.schedule_type,
+        schedule_value: args.schedule_value,
+        context_mode: args.context_mode,
+        target_group_jid: args.target_group_jid,
+      });
+      return `Scheduled task queued (${args.schedule_type}: ${args.schedule_value}).`;
+    default:
+      return `Unknown tool: ${toolName}`;
+  }
+}
+
+async function callOpenAICompatibleApi(
+  providerConfig: ProviderConfig,
+  messages: OpenAIChatMessage[],
+) {
+  if (!providerConfig.apiKey || !providerConfig.baseUrl || !providerConfig.model) {
+    throw new Error('OpenAI-compatible provider is missing apiKey, baseUrl, or model');
+  }
+
+  const baseUrl = providerConfig.baseUrl.replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${providerConfig.apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://github.com/Runchuan-BU/BioClaw',
+      'X-Title': 'BioClaw',
+    },
+    body: JSON.stringify({
+      model: providerConfig.model,
+      messages,
+      tools: getOpenAICompatibleTools(),
+      tool_choice: 'auto',
+      temperature: 0.2,
+    }),
+  });
+
+  const data = await response.json() as OpenAIChatResponse;
+  if (!response.ok) {
+    throw new Error(data.error?.message || `Provider request failed with status ${response.status}`);
+  }
+
+  const message = data.choices?.[0]?.message;
+  if (!message) {
+    throw new Error('Provider returned no message choices');
+  }
+
+  return message;
+}
+
+async function runOpenAICompatibleConversation(
+  prompt: string,
+  sessionId: string | undefined,
+  containerInput: ContainerInput,
+  env: Record<string, string | undefined>,
+  providerConfig: ProviderConfig,
+  existingMessages?: OpenAIChatMessage[],
+): Promise<{ newSessionId: string; closedDuringQuery: boolean; messages: OpenAIChatMessage[] }> {
+  const newSessionId = sessionId || `openai-compatible:${randomUUID()}`;
+  const messages: OpenAIChatMessage[] = existingMessages
+    ? [...existingMessages, { role: 'user', content: prompt }]
+    : (() => {
+        const bioSystemPrompt = getBioSystemPrompt();
+        const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
+        const globalContent = fs.existsSync(globalClaudeMdPath)
+          ? fs.readFileSync(globalClaudeMdPath, 'utf-8')
+          : '';
+        return [
+          { role: 'system', content: bioSystemPrompt + globalContent },
+          { role: 'user', content: prompt },
+        ];
+      })();
+
+  let toolIterations = 0;
+  while (toolIterations < OPENAI_TOOL_MAX_ITERATIONS) {
+    toolIterations += 1;
+    const assistantMessage = await callOpenAICompatibleApi(providerConfig, messages);
+
+    messages.push({
+      role: 'assistant',
+      content: normalizeContent(assistantMessage.content),
+      tool_calls: assistantMessage.tool_calls,
+    });
+
+    if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+      const textResult = normalizeContent(assistantMessage.content);
+      writeOutput({
+        status: 'success',
+        result: textResult,
+        newSessionId,
+      });
+      return { newSessionId, closedDuringQuery: false, messages };
+    }
+
+    for (const toolCall of assistantMessage.tool_calls) {
+      const toolResult = await executeOpenAIToolCall(
+        toolCall.function.name,
+        toolCall.function.arguments,
+        containerInput,
+        env,
+      );
+
+      messages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        content: toolResult,
+      });
+    }
+  }
+
+  throw new Error(`OpenAI-compatible agent exceeded ${OPENAI_TOOL_MAX_ITERATIONS} tool iterations`);
+}
+
 async function main(): Promise<void> {
   let containerInput: ContainerInput;
 
@@ -600,11 +1044,14 @@ async function main(): Promise<void> {
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
   }
+  const providerConfig = resolveProviderConfig(sdkEnv);
+  log(`Using provider: ${providerConfig.provider}${providerConfig.model ? ` (${providerConfig.model})` : ''}`);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
   let sessionId = containerInput.sessionId;
+  let openAiMessages: OpenAIChatMessage[] | undefined;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
   // Clean up stale _close sentinel from previous container runs
@@ -627,20 +1074,36 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
-      if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
-      }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
-      }
+      if (providerConfig.provider === 'anthropic') {
+        const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+        if (queryResult.newSessionId) {
+          sessionId = queryResult.newSessionId;
+        }
+        if (queryResult.lastAssistantUuid) {
+          resumeAt = queryResult.lastAssistantUuid;
+        }
 
-      // If _close was consumed during the query, exit immediately.
-      // Don't emit a session-update marker (it would reset the host's
-      // idle timer and cause a 30-min delay before the next _close).
-      if (queryResult.closedDuringQuery) {
-        log('Close sentinel consumed during query, exiting');
-        break;
+        if (queryResult.closedDuringQuery) {
+          log('Close sentinel consumed during query, exiting');
+          break;
+        }
+      } else {
+        const queryResult = await runOpenAICompatibleConversation(
+          prompt,
+          sessionId,
+          containerInput,
+          sdkEnv,
+          providerConfig,
+          openAiMessages,
+        );
+        sessionId = queryResult.newSessionId;
+        resumeAt = undefined;
+        openAiMessages = queryResult.messages;
+
+        if (queryResult.closedDuringQuery) {
+          log('Close sentinel consumed during query, exiting');
+          break;
+        }
       }
 
       // Emit session update so host can track it

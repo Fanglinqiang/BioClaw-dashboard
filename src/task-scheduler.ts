@@ -16,6 +16,7 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  logTokenUsage,
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -42,6 +43,23 @@ async function runTask(
     { taskId: task.id, group: task.group_folder },
     'Running scheduled task',
   );
+
+  // Advance next_run immediately so concurrent scheduler polls don't re-enqueue this task
+  // while it is still running (task can take tens of minutes).
+  {
+    let nextRunEarly: string | null = null;
+    if (task.schedule_type === 'cron') {
+      const { CronExpressionParser } = await import('cron-parser');
+      const interval = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE });
+      nextRunEarly = interval.next().toISOString();
+    } else if (task.schedule_type === 'interval') {
+      const ms = parseInt(task.schedule_value, 10);
+      nextRunEarly = new Date(Date.now() + ms).toISOString();
+    }
+    if (nextRunEarly) {
+      updateTaskAfterRun(task.id, nextRunEarly, '(running)');
+    }
+  }
 
   const groups = deps.registeredGroups();
   const group = Object.values(groups).find(
@@ -134,6 +152,23 @@ async function runTask(
     } else if (output.result) {
       // Messages are sent via MCP tool (IPC), result text is just logged
       result = output.result;
+    }
+
+    // Log token usage from container agent
+    if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
+      logTokenUsage({
+        group_folder: task.group_folder,
+        agent_type: 'claude',
+        input_tokens: output.usage.input_tokens,
+        output_tokens: output.usage.output_tokens,
+        cache_read_tokens: output.usage.cache_read_tokens,
+        cache_creation_tokens: output.usage.cache_creation_tokens,
+        cost_usd: output.usage.cost_usd,
+        duration_ms: output.usage.duration_ms,
+        num_turns: output.usage.num_turns,
+        source: 'task',
+        task_id: task.id,
+      });
     }
 
     logger.info(

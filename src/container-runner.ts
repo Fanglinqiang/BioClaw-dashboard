@@ -4,7 +4,6 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -18,6 +17,7 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { getHomeDir } from './platform.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -25,16 +25,6 @@ const OUTPUT_START_MARKER = '---BIOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---BIOCLAW_OUTPUT_END---';
 const EVENT_START_MARKER = '---BIOCLAW_EVENT_START---';
 const EVENT_END_MARKER = '---BIOCLAW_EVENT_END---';
-
-function getHomeDir(): string {
-  const home = process.env.HOME || os.homedir();
-  if (!home) {
-    throw new Error(
-      'Unable to determine home directory: HOME environment variable is not set and os.homedir() returned empty',
-    );
-  }
-  return home;
-}
 
 export interface ContainerInput {
   prompt: string;
@@ -226,7 +216,15 @@ function readSecrets(): Record<string, string> {
   if (!fs.existsSync(envFile)) return {};
 
   const allowedVars = [
-    'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+    'MODEL_PROVIDER',
+    'OPENROUTER_API_KEY',
+    'OPENROUTER_BASE_URL',
+    'OPENROUTER_MODEL',
+    'OPENAI_COMPATIBLE_API_KEY',
+    'OPENAI_COMPATIBLE_BASE_URL',
+    'OPENAI_COMPATIBLE_MODEL',
     'MINIMAX_API_KEY', 'MINIMAX_BASE_URL', 'MINIMAX_MODEL',
     'QWEN_API_BASE', 'QWEN_AUTH_TOKEN', 'QWEN_MODEL',
   ];
