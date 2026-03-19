@@ -1,38 +1,21 @@
 ---
 name: bio-research-pipeline
 description: >
-  生物研究假说生成流程 / Biological hypothesis generation pipeline.
-  用户提出研究方向后，自动并行搜索文献（PubMed + 预印本 + 通路数据库），
-  生成≥5条机制假说，多角色辩论筛出Top3，并设计湿实验方案。
-  Trigger when user asks: 帮我研究、提假说、设计实验方向、research direction,
-  generate hypotheses, literature review + experimental design.
+  Biological hypothesis generation pipeline. Given a broad research direction,
+  runs parallel literature searches (PubMed + preprints + pathway DBs), generates
+  ≥5 mechanistic hypotheses, conducts multi-agent debate to select top 3, then
+  designs wet-lab experimental plans for each. Outputs a structured research brief.
 keywords:
   - bio-research-pipeline
-  - 研究假说
-  - 假说生成
-  - 文献综述
-  - 实验设计
-  - 湿实验
   - hypothesis-generation
   - literature-review
   - experimental-design
   - wet-lab
-  - research-direction
+  - multi-agent-debate
   - pathway-analysis
-  - 研究方向
-  - 通路分析
 ---
 
 # Biological Research Hypothesis Pipeline
-
-> **自动触发条件（必须主动调用此 skill）：**
-> 当用户说以下任何内容时，**立即运行此 skill，不要直接回答**：
-> - "帮我研究一下 X"、"研究一下 X 机制"、"X 方向帮我提假说"
-> - "针对 X 设计研究方向/实验方案"
-> - "X 通路的假说"、"X 相关的研究思路"
-> - "run bio-research-pipeline"、"generate hypotheses for X"
->
-> **执行本 skill 时，严格按照下面 Stage 1→5 的顺序完整跑完，不要跳过任何阶段。**
 
 You are a research coordinator orchestrating a multi-stage biological research pipeline.
 This skill is triggered when a user provides a broad biological research direction and wants:

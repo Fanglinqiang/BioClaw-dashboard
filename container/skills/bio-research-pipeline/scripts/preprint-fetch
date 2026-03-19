@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Preprint fetcher (bioRxiv + medRxiv) for bio-research-pipeline.
+Preprint fetcher (bioRxiv + medRxiv via Europe PMC) for bio-research-pipeline.
 
 Usage:
   preprint-fetch "research topic" [--max 30] [--days 180] [--server biorxiv|medrxiv|both]
@@ -11,8 +11,6 @@ Output: structured text summary of relevant preprints
 import sys
 import argparse
 import json
-import re
-import time
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
@@ -23,38 +21,7 @@ except ImportError:
     sys.exit(1)
 
 
-BIORXIV_API = "https://api.biorxiv.org/details/biorxiv"
-MEDRXIV_API = "https://api.biorxiv.org/details/medrxiv"
-
-
-def fetch_server(api_url: str, start_date: str, end_date: str, cursor: int = 0) -> list[dict]:
-    url = f"{api_url}/{start_date}/{end_date}/{cursor}/json"
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        return data.get("collection", [])
-    except Exception as e:
-        print(f"[WARNING] API error: {e}", file=sys.stderr)
-        return []
-
-
-def score_relevance(paper: dict, keywords: list[str]) -> float:
-    title = paper.get("title", "").lower()
-    abstract = paper.get("abstract", "").lower()
-    category = paper.get("category", "").lower()
-
-    score = 0.0
-    for kw in keywords:
-        kw_lower = kw.lower()
-        if kw_lower in title:
-            score += 3.0
-        if kw_lower in abstract:
-            score += 1.0
-        if kw_lower in category:
-            score += 0.5
-
-    return score
+EUROPEPMC_API = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 
 
 def fetch_preprints(
@@ -66,12 +33,75 @@ def fetch_preprints(
     end_date = datetime.now().strftime("%Y-%m-%d")
     start_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
-    keywords = [w for w in topic.split() if len(w) > 3]
-
     print(f"[Preprint] Date range: {start_date} to {end_date}", file=sys.stderr)
-    print(f"[Preprint] Keywords: {keywords}", file=sys.stderr)
+    print(f"[Preprint] Searching for: {topic}", file=sys.stderr)
+
+    # Build Europe PMC query with preprint source filter
+    # SRC:PPR = preprint sources (bioRxiv, medRxiv, etc.)
+    source_filter = "SRC:PPR"
+    if server == "biorxiv":
+        source_filter = '(PUBLISHER:"bioRxiv")'
+    elif server == "medrxiv":
+        source_filter = '(PUBLISHER:"medRxiv")'
+
+    query = f'({topic}) AND {source_filter} AND (FIRST_PDATE:[{start_date} TO {end_date}])'
+
+    print(f"[Preprint] Query: {query}", file=sys.stderr)
 
     all_papers = []
+    page_size = min(max_results, 100)
+
+    try:
+        r = requests.get(
+            EUROPEPMC_API,
+            params={
+                "query": query,
+                "format": "json",
+                "pageSize": page_size,
+                "sort": "CITED desc",  # most cited first
+                "resultType": "core",
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+        results = data.get("resultList", {}).get("result", [])
+        print(f"[Preprint] API returned {len(results)} results (total: {data.get('hitCount', '?')})", file=sys.stderr)
+
+        for paper in results:
+            authors_list = paper.get("authorString", "")
+            all_papers.append({
+                "server": paper.get("bookOrReportDetails", {}).get("publisher", "Preprint"),
+                "title": paper.get("title", ""),
+                "authors": authors_list,
+                "date": paper.get("firstPublicationDate", ""),
+                "doi": paper.get("doi", ""),
+                "abstract": paper.get("abstractText", ""),
+                "category": paper.get("journalInfo", {}).get("journal", {}).get("title", "") if paper.get("journalInfo") else "",
+                "pmcid": paper.get("pmcid", ""),
+                "source": paper.get("source", ""),
+                "cited_by": paper.get("citedByCount", 0),
+            })
+
+    except requests.exceptions.Timeout:
+        print(f"[WARNING] Europe PMC API timed out, trying fallback...", file=sys.stderr)
+        return _fallback_biorxiv(topic, start_date, end_date, max_results, server)
+    except Exception as e:
+        print(f"[WARNING] Europe PMC API error: {e}", file=sys.stderr)
+        return _fallback_biorxiv(topic, start_date, end_date, max_results, server)
+
+    return all_papers[:max_results]
+
+
+def _fallback_biorxiv(topic: str, start_date: str, end_date: str, max_results: int, server: str) -> list[dict]:
+    """Fallback to bioRxiv API with shorter date range to avoid timeout."""
+    # Shorten to 30 days to avoid the massive response
+    recent_start = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    keywords = [w for w in topic.split() if len(w) > 3]
+
+    BIORXIV_API = "https://api.biorxiv.org/details/biorxiv"
+    MEDRXIV_API = "https://api.biorxiv.org/details/medrxiv"
 
     servers_to_search = []
     if server in ("biorxiv", "both"):
@@ -79,19 +109,17 @@ def fetch_preprints(
     if server in ("medrxiv", "both"):
         servers_to_search.append(("medRxiv", MEDRXIV_API))
 
+    all_papers = []
     for server_name, api_url in servers_to_search:
-        print(f"[Preprint] Fetching from {server_name}...", file=sys.stderr)
-
-        # Fetch up to 200 papers (API returns 100 per page)
-        for cursor in [0, 100]:
-            papers = fetch_server(api_url, start_date, end_date, cursor)
-            if not papers:
-                break
-
-            # Score and filter
-            for paper in papers:
-                score = score_relevance(paper, keywords)
-                if score > 0:
+        url = f"{api_url}/{recent_start}/{end_date}/0/json"
+        try:
+            r = requests.get(url, timeout=20)
+            r.raise_for_status()
+            data = r.json()
+            for paper in data.get("collection", []):
+                title = paper.get("title", "").lower()
+                abstract = paper.get("abstract", "").lower()
+                if any(kw.lower() in title or kw.lower() in abstract for kw in keywords):
                     all_papers.append({
                         "server": server_name,
                         "title": paper.get("title", ""),
@@ -100,14 +128,9 @@ def fetch_preprints(
                         "doi": paper.get("doi", ""),
                         "abstract": paper.get("abstract", ""),
                         "category": paper.get("category", ""),
-                        "version": paper.get("version", "1"),
-                        "relevance_score": score,
                     })
-
-            time.sleep(0.3)  # be polite to API
-
-    # Sort by relevance, then by date (most recent first)
-    all_papers.sort(key=lambda x: (x["relevance_score"], x["date"]), reverse=True)
+        except Exception as e:
+            print(f"[WARNING] {server_name} fallback error: {e}", file=sys.stderr)
 
     return all_papers[:max_results]
 
@@ -150,30 +173,30 @@ def main():
         return
 
     for i, paper in enumerate(papers, 1):
-        # Truncate authors
         authors = paper["authors"]
         if len(authors) > 80:
             authors = authors[:80] + "..."
 
-        print(f"[{i}] [{paper['server']}] {paper['title']}")
-        print(f"     {authors}")
-        print(f"     Date: {paper['date']} | Category: {paper['category']} | v{paper['version']}")
-        print(f"     DOI: https://doi.org/{paper['doi']}" if paper['doi'] else "     DOI: N/A")
+        server_tag = paper.get("server", "Preprint")
+        cited = paper.get("cited_by")
+        cited_str = f" | Cited: {cited}" if cited else ""
 
-        abstract = paper["abstract"]
+        print(f"[{i}] [{server_tag}] {paper['title']}")
+        print(f"     {authors}")
+        print(f"     Date: {paper['date']}{cited_str}")
+        print(f"     DOI: https://doi.org/{paper['doi']}" if paper.get('doi') else "     DOI: N/A")
+
+        abstract = paper.get("abstract", "")
         if len(abstract) > 450:
             abstract = abstract[:450] + "..."
         if abstract:
             print(f"     {abstract}")
-
-        print(f"     Relevance score: {paper['relevance_score']:.1f}")
         print()
 
     print(f"\n{'='*60}")
     print("END OF PREPRINT RESULTS")
     print(f"{'='*60}")
 
-    # Highlight novel findings
     print("\nNOTE FOR AGENT: Preprints have NOT been peer-reviewed.")
     print("Treat findings as preliminary. Check if any have since been published in journals.")
     print(f"Direct search URL: https://www.biorxiv.org/search/{quote(args.topic)}")
