@@ -1134,14 +1134,17 @@ function initChat() {
     }
   }).catch(function(){});
   renderChatList();
-  // Restore last active chat session
-  if (_activeChatId && _chatSessions.length) {
-    var active = _chatSessions.find(function(s) { return s.id === _activeChatId; });
-    if (active) {
-      _chatSessionId = active.sessionId || null;
-      _chatToolBlocks = active.toolBlocks || {};
-      document.getElementById('chat-messages').innerHTML = active.html || _getEmptyHtml();
-    }
+  // Always open the most recent chat (first in array, since we unshift)
+  if (_chatSessions.length > 0) {
+    var mostRecent = _chatSessions[0];
+    _activeChatId = mostRecent.id;
+    _chatSessionId = mostRecent.sessionId || null;
+    _chatToolBlocks = mostRecent.toolBlocks || {};
+    document.getElementById('chat-messages').innerHTML = mostRecent.html || _getEmptyHtml();
+    // Restore group selection
+    var groupSel2 = document.getElementById('chat-group-select');
+    if (groupSel2 && mostRecent.groupFolder) groupSel2.value = mostRecent.groupFolder;
+    renderChatList();
   }
 }
 
@@ -1161,7 +1164,13 @@ function _saveCurrentChatState() {
   if (!_activeChatId) return;
   var session = _chatSessions.find(function(s) { return s.id === _activeChatId; });
   if (session) {
-    session.html = document.getElementById('chat-messages').innerHTML;
+    // Strip large base64 data URIs from images/attachments before saving to localStorage
+    // to avoid exceeding the 5MB limit. Replace with a placeholder thumbnail.
+    var rawHtml = document.getElementById('chat-messages').innerHTML;
+    rawHtml = rawHtml.replace(/(<img\s[^>]*?)src="data:[^"]{200,}"/g, function(match, prefix) {
+      return prefix + 'src="" data-stripped="1" style="display:none"';
+    });
+    session.html = rawHtml;
     session.sessionId = _chatSessionId;
     session.toolBlocks = JSON.parse(JSON.stringify(_chatToolBlocks));
   }
@@ -1612,8 +1621,10 @@ function sendChatMessage() {
   }).catch(function(err) {
     if (err.name === 'AbortError') return; // cancelled by newChat
     showChatError(textEl, 'Request failed: ' + err.message);
+  }).finally(function() {
     _chatStreaming = false;
     document.getElementById('chat-send').disabled = false;
+    _chatAbortController = null;
   });
 
   // Auto-resize textarea

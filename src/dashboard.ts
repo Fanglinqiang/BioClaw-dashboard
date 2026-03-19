@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 
 import {
   CONTAINER_IMAGE,
+  DATA_DIR,
   GROUPS_DIR,
   MINIMAX_API_KEY,
   MINIMAX_BASE_URL,
@@ -494,6 +495,8 @@ async function handleApi(
 
       let hadTextEvent = false;
       const sentTexts = new Set<string>();
+      let gotResult = false;
+      const ipcInputDir = path.join(DATA_DIR, 'ipc', group.folder, 'input');
       await runContainerAgent(
         group,
         {
@@ -523,6 +526,15 @@ async function handleApi(
               num_turns: output.usage.num_turns,
               source: 'dashboard',
             });
+          }
+          // Dashboard is single-shot: after the first result, signal the container
+          // to exit so the SSE stream closes and the send button re-enables.
+          if (!gotResult && (output.result || output.usage)) {
+            gotResult = true;
+            try {
+              fs.mkdirSync(ipcInputDir, { recursive: true });
+              fs.writeFileSync(path.join(ipcInputDir, '_close'), '');
+            } catch { /* ignore */ }
           }
         },
         (event: ContainerEvent) => {

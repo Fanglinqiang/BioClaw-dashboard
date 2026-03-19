@@ -212,6 +212,8 @@ export class WeComChannel implements Channel {
   private readonly reqIdStorePath: string;
   // per-JID send queue to prevent chunk interleaving across concurrent sendMessage calls
   private sendQueues: Map<string, Promise<void>> = new Map();
+  // pending WebSocket messages awaiting ack, keyed by req_id (for 846604 retry)
+  private pendingWsMessages: Map<string, { jid: string; text: string; ts: number }> = new Map();
 
   constructor(botId: string, secret: string, opts: WeComChannelOpts) {
     this.botId = botId;
@@ -341,6 +343,20 @@ export class WeComChannel implements Channel {
     if (msg.errcode !== undefined && msg.errcode !== 0) {
       logger.error({ errcode: msg.errcode, errmsg: msg.errmsg }, 'WeCom server error');
       console.error(`\n  WeCom error ${msg.errcode}: ${msg.errmsg}\n`);
+      // 846604 = websocket request expired — retry via proactive Corp API
+      if (msg.errcode === 846604) {
+        const reqId: string | undefined = msg.headers?.req_id;
+        if (reqId) {
+          const pending = this.pendingWsMessages.get(reqId);
+          if (pending) {
+            this.pendingWsMessages.delete(reqId);
+            logger.info({ jid: pending.jid }, 'WeCom 846604: retrying via proactive send');
+            this._sendProactive(pending.jid, pending.text).catch(err => {
+              logger.error({ err }, 'WeCom proactive retry after 846604 failed');
+            });
+          }
+        }
+      }
       return;
     }
 
@@ -516,6 +532,12 @@ export class WeComChannel implements Channel {
       logger.warn({ jid }, 'WeCom WebSocket fallback: no req_id, message dropped');
       return;
     }
+    // Store for retry on 846604; clean up stale entries (>5 min) to prevent leak
+    const now = Date.now();
+    for (const [id, entry] of this.pendingWsMessages) {
+      if (now - entry.ts > 300_000) this.pendingWsMessages.delete(id);
+    }
+    this.pendingWsMessages.set(reqId, { jid, text, ts: now });
     this._send({
       cmd: 'aibot_respond_msg',
       headers: { req_id: reqId },

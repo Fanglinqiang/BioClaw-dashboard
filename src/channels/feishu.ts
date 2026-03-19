@@ -3,7 +3,7 @@ import https from 'https';
 import path from 'path';
 import * as lark from '@larksuiteoapi/node-sdk';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
 import {
   Channel,
@@ -292,8 +292,7 @@ export class FeishuChannel implements Channel {
         const groupFolder = group?.folder;
 
         if (groupFolder) {
-          const { STORE_DIR } = await import('../config.js');
-          const groupDir = path.join(STORE_DIR, '..', 'groups', groupFolder);
+          const groupDir = path.join(GROUPS_DIR, groupFolder);
           fs.mkdirSync(groupDir, { recursive: true });
 
           const token = await (this.client as any).tokenManager.getTenantAccessToken();

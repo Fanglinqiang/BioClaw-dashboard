@@ -41,7 +41,7 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 
 ## 快速开始
 
-> 说明：当前仓库中已经实现的消息通道是 WhatsApp。文档中的 QQ / 飞书截图展示的是扩展方向，不代表仓库里已经内置了可直接运行的 QQ / 飞书通道。
+> 说明：当前仓库中已实现的消息通道包括 WhatsApp、WeCom（企业微信）、飞书（Lark）和 Discord。QQ 通道展示的是扩展方向，尚未内置。
 
 > 现在也支持一个更适合 Windows 用户的本地网页聊天入口。若你在中国、或者暂时不想接 WhatsApp，可直接走 `HTTP webhook + 本地网页聊天`。
 
@@ -147,6 +147,41 @@ WECOM_CORP_SECRET=应用Secret
 ```
 服务器 IP 需加入应用的企业可信 IP 白名单。
 
+### 飞书（Lark）
+
+1. 前往 [飞书开放平台](https://open.feishu.cn/) 创建 **企业自建应用**
+2. 在 **添加应用能力** 中启用 **机器人**
+3. 在 **权限管理** 中开通以下权限：
+   - `im:message` — 接收消息
+   - `im:message:send_as_bot` — 以机器人身份发送消息
+   - `im:resource` — 下载消息中的图片和文件
+   - `im:message.group_msg` — 接收群聊消息
+4. 在 **事件与回调** 中选择 **长连接** 模式
+5. 订阅事件：`im.message.receive_v1`
+6. 复制 **App ID** 和 **App Secret**，添加到 `.env`：
+   ```
+   FEISHU_APP_ID=cli_your_app_id
+   FEISHU_APP_SECRET=your_app_secret
+   ```
+7. 发布应用版本并通过管理员审批
+8. 将机器人添加到群聊或直接发送私聊消息即可开始对话
+
+**自动注册：** 新对话会自动注册，无需手动配置。默认使用 `main` 文件夹，可通过以下配置覆盖：
+```
+FEISHU_DEFAULT_FOLDER=my-folder
+```
+
+**多机器人支持：** 最多可同时运行 3 个飞书机器人（例如不同群使用不同 agent）：
+```
+FEISHU2_APP_ID=cli_second_app_id
+FEISHU2_APP_SECRET=second_app_secret
+FEISHU2_DEFAULT_FOLDER=literature
+
+FEISHU3_APP_ID=cli_third_app_id
+FEISHU3_APP_SECRET=third_app_secret
+FEISHU3_DEFAULT_FOLDER=qwen-agent
+```
+
 ### Discord
 
 1. 打开 [Discord Developer Portal](https://discord.com/developers/applications)
@@ -195,7 +230,7 @@ install https://github.com/Runchuan-BU/BioClaw
 
 更多任务示例见 [ExampleTask/ExampleTask.md](ExampleTask/ExampleTask.md)。
 
-> 注意：上面的 QQ / 飞书图片目前是产品展示示例，不是仓库内现成可启用的接入实现。
+> 注意：QQ 通道目前是展示示例，尚未内置实现。飞书通道已内置支持，配置 `.env` 即可使用。
 
 ## 系统架构
 

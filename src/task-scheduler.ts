@@ -44,22 +44,7 @@ async function runTask(
     'Running scheduled task',
   );
 
-  // Advance next_run immediately so concurrent scheduler polls don't re-enqueue this task
-  // while it is still running (task can take tens of minutes).
-  {
-    let nextRunEarly: string | null = null;
-    if (task.schedule_type === 'cron') {
-      const { CronExpressionParser } = await import('cron-parser');
-      const interval = CronExpressionParser.parse(task.schedule_value, { tz: TIMEZONE });
-      nextRunEarly = interval.next().toISOString();
-    } else if (task.schedule_type === 'interval') {
-      const ms = parseInt(task.schedule_value, 10);
-      nextRunEarly = new Date(Date.now() + ms).toISOString();
-    }
-    if (nextRunEarly) {
-      updateTaskAfterRun(task.id, nextRunEarly, '(running)');
-    }
-  }
+  // next_run was already advanced by the scheduler loop before enqueuing.
 
   const groups = deps.registeredGroups();
   const group = Object.values(groups).find(
@@ -234,6 +219,22 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         const currentTask = getTaskById(task.id);
         if (!currentTask || currentTask.status !== 'active') {
           continue;
+        }
+
+        // Advance next_run BEFORE enqueuing to prevent duplicate triggers.
+        // Without this, a slow-starting task (queued behind an active container)
+        // would still have the old next_run when the next scheduler poll fires,
+        // causing getDueTasks() to return it again.
+        let nextRun: string | null = null;
+        if (currentTask.schedule_type === 'cron') {
+          const interval = CronExpressionParser.parse(currentTask.schedule_value, { tz: TIMEZONE });
+          nextRun = interval.next().toISOString();
+        } else if (currentTask.schedule_type === 'interval') {
+          const ms = parseInt(currentTask.schedule_value, 10);
+          nextRun = new Date(Date.now() + ms).toISOString();
+        }
+        if (nextRun) {
+          updateTaskAfterRun(currentTask.id, nextRun, '(pending)');
         }
 
         deps.queue.enqueueTask(

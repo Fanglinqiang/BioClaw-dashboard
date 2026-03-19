@@ -160,6 +160,46 @@ WECOM_CORP_SECRET=your-corp-secret
 ```
 The server IP must be added to the app's trusted IP whitelist.
 
+### Feishu / Lark (飞书)
+
+1. Go to the [Feishu Open Platform](https://open.feishu.cn/) and create a **self-built app** (企业自建应用)
+2. Enable **Bot** capability under **Add Capabilities**
+3. Under **Permissions & Scopes**, grant:
+   - `im:message` — Receive messages
+   - `im:message:send_as_bot` — Send messages as bot
+   - `im:resource` — Download images/files from messages
+   - `im:message.group_msg` — Receive group messages (if using in groups)
+4. Under **Events & Callbacks**, select **Long Connection** (长连接) mode
+5. Subscribe to event: `im.message.receive_v1`
+6. Copy the **App ID** and **App Secret**, add to `.env`:
+   ```
+   FEISHU_APP_ID=cli_your_app_id
+   FEISHU_APP_SECRET=your_app_secret
+   ```
+7. Publish the app version and have the admin approve it
+8. Add the bot to a group or send it a direct message to start chatting
+
+**Auto-registration:** New chats are automatically registered — no manual setup needed. By default, they use the `main` group folder. Override with:
+```
+FEISHU_DEFAULT_FOLDER=my-folder
+```
+
+**Multi-bot support:** Up to 3 Feishu bots can run simultaneously (e.g., different agents for different groups):
+```
+FEISHU2_APP_ID=cli_second_app_id
+FEISHU2_APP_SECRET=second_app_secret
+FEISHU2_DEFAULT_FOLDER=literature
+
+FEISHU3_APP_ID=cli_third_app_id
+FEISHU3_APP_SECRET=third_app_secret
+FEISHU3_DEFAULT_FOLDER=qwen-agent
+```
+
+<p align="center">
+  <img src="docs/images/lark/lark-deepseek-1.jpg" width="45%" alt="Feishu Chat Example 1"/>
+  <img src="docs/images/lark/lark-deepseek-2.jpg" width="45%" alt="Feishu Chat Example 2"/>
+</p>
+
 ### Discord
 
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
