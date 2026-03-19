@@ -4,7 +4,6 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -18,21 +17,14 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { getHomeDir } from './platform.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---BIOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---BIOCLAW_OUTPUT_END---';
-
-function getHomeDir(): string {
-  const home = process.env.HOME || os.homedir();
-  if (!home) {
-    throw new Error(
-      'Unable to determine home directory: HOME environment variable is not set and os.homedir() returned empty',
-    );
-  }
-  return home;
-}
+const EVENT_START_MARKER = '---BIOCLAW_EVENT_START---';
+const EVENT_END_MARKER = '---BIOCLAW_EVENT_END---';
 
 export interface ContainerInput {
   prompt: string;
@@ -49,6 +41,26 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: TokenUsageSummary;
+}
+
+export interface TokenUsageSummary {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
+  num_turns: number;
+}
+
+export interface ContainerEvent {
+  type: 'tool_call' | 'tool_result' | 'text';
+  id?: string;
+  tool?: string;
+  input?: Record<string, unknown>;
+  output?: string;
+  text?: string;
 }
 
 interface VolumeMount {
@@ -126,19 +138,32 @@ function buildVolumeMounts(
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
+  // Use manual recursive copy to avoid ENOTSUP from xattr (docker grpcfuse ownership)
+  function copySkillDir(src: string, dst: string) {
+    fs.mkdirSync(dst, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      const s = path.join(src, entry.name);
+      const d = path.join(dst, entry.name);
+      if (entry.isDirectory()) {
+        copySkillDir(s, d);
+      } else {
+        try {
+          fs.copyFileSync(s, d, fs.constants.COPYFILE_FICLONE_FORCE);
+        } catch {
+          // fallback: read+write to skip xattr issues
+          fs.writeFileSync(d, fs.readFileSync(s));
+          try { fs.chmodSync(d, fs.statSync(s).mode); } catch { /* ignore */ }
+        }
+      }
+    }
+  }
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.mkdirSync(dstDir, { recursive: true });
-      for (const file of fs.readdirSync(srcDir)) {
-        const srcFile = path.join(srcDir, file);
-        const dstFile = path.join(dstDir, file);
-        fs.copyFileSync(srcFile, dstFile);
-      }
+      copySkillDir(srcDir, path.join(skillsDst, skillDir));
     }
   }
   mounts.push({
@@ -190,7 +215,19 @@ function readSecrets(): Record<string, string> {
   const envFile = path.join(path.resolve(fileURLToPath(import.meta.url), '../..'), '.env');
   if (!fs.existsSync(envFile)) return {};
 
-  const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+  const allowedVars = [
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+    'MODEL_PROVIDER',
+    'OPENROUTER_API_KEY',
+    'OPENROUTER_BASE_URL',
+    'OPENROUTER_MODEL',
+    'OPENAI_COMPATIBLE_API_KEY',
+    'OPENAI_COMPATIBLE_BASE_URL',
+    'OPENAI_COMPATIBLE_MODEL',
+    'MINIMAX_API_KEY', 'MINIMAX_BASE_URL', 'MINIMAX_MODEL',
+    'QWEN_API_BASE', 'QWEN_AUTH_TOKEN', 'QWEN_MODEL',
+  ];
   const secrets: Record<string, string> = {};
   const content = fs.readFileSync(envFile, 'utf-8');
 
@@ -236,6 +273,7 @@ export async function runContainerAgent(
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  onEvent?: (event: ContainerEvent) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
@@ -295,6 +333,7 @@ export async function runContainerAgent(
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
     let newSessionId: string | undefined;
+    let lastUsage: TokenUsageSummary | undefined;
     let outputChain = Promise.resolve();
 
     container.stdout.on('data', (data) => {
@@ -315,34 +354,60 @@ export async function runContainerAgent(
         }
       }
 
-      // Stream-parse for output markers
-      if (onOutput) {
+      // Stream-parse for output and event markers
+      if (onOutput || onEvent) {
         parseBuffer += chunk;
-        let startIdx: number;
-        while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
-          const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
+        let processed = true;
+        while (processed) {
+          processed = false;
+          const outStart = parseBuffer.indexOf(OUTPUT_START_MARKER);
+          const evtStart = parseBuffer.indexOf(EVENT_START_MARKER);
+
+          // Determine which marker comes first
+          let nextStart: number;
+          let isOutput: boolean;
+          if (outStart !== -1 && (evtStart === -1 || outStart <= evtStart)) {
+            nextStart = outStart;
+            isOutput = true;
+          } else if (evtStart !== -1) {
+            nextStart = evtStart;
+            isOutput = false;
+          } else {
+            break;
+          }
+
+          const endMarker = isOutput ? OUTPUT_END_MARKER : EVENT_END_MARKER;
+          const startLen = isOutput ? OUTPUT_START_MARKER.length : EVENT_START_MARKER.length;
+          const endIdx = parseBuffer.indexOf(endMarker, nextStart);
           if (endIdx === -1) break; // Incomplete pair, wait for more data
 
-          const jsonStr = parseBuffer
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
-          parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
+          const jsonStr = parseBuffer.slice(nextStart + startLen, endIdx).trim();
+          parseBuffer = parseBuffer.slice(endIdx + endMarker.length);
+          processed = true;
 
           try {
-            const parsed: ContainerOutput = JSON.parse(jsonStr);
-            if (parsed.newSessionId) {
-              newSessionId = parsed.newSessionId;
+            if (isOutput && onOutput) {
+              const parsed: ContainerOutput = JSON.parse(jsonStr);
+              if (parsed.newSessionId) {
+                newSessionId = parsed.newSessionId;
+              }
+              if (parsed.usage) {
+                lastUsage = parsed.usage;
+              }
+              hadStreamingOutput = true;
+              // Activity detected — reset the hard timeout
+              resetTimeout();
+              // Call onOutput for all markers (including null results)
+              // so idle timers start even for "silent" query completions.
+              outputChain = outputChain.then(() => onOutput(parsed));
+            } else if (!isOutput && onEvent) {
+              const event: ContainerEvent = JSON.parse(jsonStr);
+              onEvent(event);
             }
-            hadStreamingOutput = true;
-            // Activity detected — reset the hard timeout
-            resetTimeout();
-            // Call onOutput for all markers (including null results)
-            // so idle timers start even for "silent" query completions.
-            outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
             logger.warn(
               { group: group.name, error: err },
-              'Failed to parse streamed output chunk',
+              'Failed to parse streamed marker chunk',
             );
           }
         }
@@ -427,6 +492,7 @@ export async function runContainerAgent(
               status: 'success',
               result: null,
               newSessionId,
+              usage: lastUsage,
             });
           });
           return;
@@ -527,13 +593,14 @@ export async function runContainerAgent(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId },
+            { group: group.name, duration, newSessionId, usage: lastUsage },
             'Container completed (streaming mode)',
           );
           resolve({
             status: 'success',
             result: null,
             newSessionId,
+            usage: lastUsage,
           });
         });
         return;

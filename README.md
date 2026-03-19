@@ -1,5 +1,5 @@
 <div align="center">
-<img src="bioclaw_logo1.jpg" width="200">
+<img src="bioclaw_logo.jpg" width="200">
 
 
 # BioClaw
@@ -62,7 +62,7 @@ Results — including images, plots, and structured reports — are delivered di
 - macOS or Linux
 - Node.js 20+
 - Docker Desktop
-- Anthropic API key
+- Anthropic API key or OpenRouter API key
 
 ### Installation
 
@@ -74,20 +74,150 @@ cd BioClaw
 # Install dependencies
 npm install
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your Anthropic API key and WhatsApp credentials
-
 # Start BioClaw
 npm start
 ```
 
+### Model Provider Configuration
+
+BioClaw now supports two provider paths:
+
+- **Anthropic** — default, keeps the original Claude Agent SDK flow
+- **OpenRouter / OpenAI-compatible** — optional path for OpenRouter and similar `/chat/completions` providers
+
+Create a `.env` file in the project root and choose **one** of the following setups.
+
+**Option A — Anthropic (default)**
+
+```bash
+ANTHROPIC_API_KEY=your_anthropic_key
+```
+
+**Option B — OpenRouter** (Gemini, DeepSeek, Claude, GPT, and more)
+
+```bash
+MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-your-key
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=deepseek/deepseek-chat-v3.1
+```
+
+Popular model IDs: `deepseek/deepseek-chat-v3.1`, `google/gemini-2.5-flash`, `anthropic/claude-3.5-sonnet`. Full list: [openrouter.ai/models](https://openrouter.ai/models)
+
+**Note:** Use models that support [tool calling](https://openrouter.ai/models?supported_parameters=tools) (e.g. DeepSeek, Gemini, Claude). Session history is preserved within a container session; after idle timeout, a new container starts with a fresh context.
+
+**Generic OpenAI-compatible setup**
+
+```bash
+MODEL_PROVIDER=openai-compatible
+OPENAI_COMPATIBLE_API_KEY=your_api_key
+OPENAI_COMPATIBLE_BASE_URL=https://your-provider.example/v1
+OPENAI_COMPATIBLE_MODEL=your-model-name
+```
+
+After updating `.env`, restart BioClaw:
+
+```bash
+npm run dev
+```
+
+When a container starts, `docker logs <container-name>` will show which provider path is active.
+
 ### Usage
 
-In any WhatsApp group where BioClaw is connected, simply message:
+In any connected chat, simply message:
 
 ```
 @Bioclaw <your request>
+```
+
+## Channel Setup
+
+BioClaw supports multiple messaging platforms. Enable one or more by setting the corresponding environment variables in `.env`.
+
+### WhatsApp (Default)
+
+No credentials needed. On first run, a QR code is printed to the terminal — scan it with your WhatsApp app. Auth state is persisted in `store/auth/`.
+
+### WeCom (Enterprise WeChat)
+
+1. Log in to the [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/frame)
+2. Go to **Apps & Mini Programs** > **Smart Robots** > **Create**
+3. Select **API mode** with **Long Connection** (not Callback URL)
+4. Copy the **Bot ID** and **Secret**
+5. Add to `.env`:
+   ```
+   WECOM_BOT_ID=your-bot-id
+   WECOM_SECRET=your-secret
+   ```
+6. Add the bot to a group in WeCom, then `@` it to start chatting
+
+**Image sending (optional):** To send images in WeCom, create a self-built app in the admin console and configure:
+```
+WECOM_CORP_ID=your-corp-id
+WECOM_AGENT_ID=your-agent-id
+WECOM_CORP_SECRET=your-corp-secret
+```
+The server IP must be added to the app's trusted IP whitelist.
+
+### Feishu / Lark (飞书)
+
+1. Go to the [Feishu Open Platform](https://open.feishu.cn/) and create a **self-built app** (企业自建应用)
+2. Enable **Bot** capability under **Add Capabilities**
+3. Under **Permissions & Scopes**, grant:
+   - `im:message` — Receive messages
+   - `im:message:send_as_bot` — Send messages as bot
+   - `im:resource` — Download images/files from messages
+   - `im:message.group_msg` — Receive group messages (if using in groups)
+4. Under **Events & Callbacks**, select **Long Connection** (长连接) mode
+5. Subscribe to event: `im.message.receive_v1`
+6. Copy the **App ID** and **App Secret**, add to `.env`:
+   ```
+   FEISHU_APP_ID=cli_your_app_id
+   FEISHU_APP_SECRET=your_app_secret
+   ```
+7. Publish the app version and have the admin approve it
+8. Add the bot to a group or send it a direct message to start chatting
+
+**Auto-registration:** New chats are automatically registered — no manual setup needed. By default, they use the `main` group folder. Override with:
+```
+FEISHU_DEFAULT_FOLDER=my-folder
+```
+
+**Multi-bot support:** Up to 3 Feishu bots can run simultaneously (e.g., different agents for different groups):
+```
+FEISHU2_APP_ID=cli_second_app_id
+FEISHU2_APP_SECRET=second_app_secret
+FEISHU2_DEFAULT_FOLDER=literature
+
+FEISHU3_APP_ID=cli_third_app_id
+FEISHU3_APP_SECRET=third_app_secret
+FEISHU3_DEFAULT_FOLDER=qwen-agent
+```
+
+<p align="center">
+  <img src="docs/images/lark/lark-deepseek-1.jpg" width="45%" alt="Feishu Chat Example 1"/>
+  <img src="docs/images/lark/lark-deepseek-2.jpg" width="45%" alt="Feishu Chat Example 2"/>
+</p>
+
+### Discord
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click **New Application**, then go to **Bot** > **Add Bot**
+3. Enable **MESSAGE CONTENT INTENT** under Privileged Gateway Intents
+4. Copy the **Bot Token** and add to `.env`:
+   ```
+   DISCORD_BOT_TOKEN=your-bot-token
+   ```
+5. Go to **OAuth2** > **URL Generator**, select scope `bot`, grant permissions: Send Messages, Attach Files, Read Message History
+6. Open the generated URL to invite the bot to your Discord server
+7. Send a message in any channel — the bot auto-registers and responds
+
+### Disabling a Channel
+
+To run without WhatsApp (e.g., WeCom/Discord only):
+```
+DISABLE_WHATSAPP=1
 ```
 
 ## Second Quick Start
@@ -223,7 +353,16 @@ The bioinformatics tool suite and domain-specific skills — including sequence 
 | **BWA** | Burrows-Wheeler short read aligner |
 | **minimap2** | Long read and assembly alignment |
 | **FastQC** | Sequencing quality control reports |
+| **fastp** | FASTQ filtering and trimming (QC/preprocessing) |
+| **MultiQC** | Aggregate QC reports into one summary |
 | **seqtk** | FASTA/FASTQ file manipulation |
+| **seqkit** | FASTA/FASTQ toolkit (extended) |
+| **BCFtools** | Variant calling and VCF/BCF manipulation |
+| **tabix** | Index/query compressed VCF/BED (bgzip/tabix) |
+| **pigz** | Parallel gzip compression/decompression |
+| **SRA Toolkit** | Download data from NCBI SRA (prefetch/fasterq-dump) |
+| **Salmon** | RNA-seq transcript quantification |
+| **kallisto** | RNA-seq transcript quantification |
 | **PyMOL** | Molecular visualization and rendering |
 
 ### Python Libraries
@@ -278,29 +417,6 @@ In any WhatsApp group where BioClaw is connected, simply message:
 
 See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use demo prompts with expected outputs.
 
-## Web Dashboard
-
-BioClaw includes a built-in web dashboard accessible at `http://localhost:3847` (or the port set by `DASHBOARD_PORT`).
-
-### Features
-
-| Tab | Description |
-|-----|-------------|
-| **Overview** | Live stats: message count, task runs, connected groups, registered models and skills |
-| **Groups** | All WhatsApp/Telegram groups with message count and last-activity time |
-| **Tasks** | Scheduled task list — view, pause, resume, and cancel tasks |
-| **Stats** | Activity charts (messages per day, task runs per day, success rate, avg/max duration) with 7d/14d/30d period selector |
-| **Alerts** | Alert rules based on group silence thresholds — see which rules are currently firing |
-| **Settings** | Environment configuration viewer |
-| **Models** | Configured AI models (Claude, MiniMax, Qwen) with auth status |
-| **Skills** | Installed agent skills |
-
-### UI controls
-
-- **Auto-refresh** — select refresh interval (off / 10s / 30s / 1min / 5min)
-- **Dark / Light theme** — toggle in the header, persisted in `localStorage`
-- **Language** — switch between Chinese (中文) and English (EN), persisted in `localStorage`
-
 ## Project Structure
 
 ```
@@ -330,16 +446,6 @@ BioClaw builds upon the STELLA framework. If you use BioClaw in your research, p
   doi={10.1101/2025.07.01.662467}
 }
 ```
-
-## Related Projects
-
-- [STELLA](https://github.com/zaixizhang/STELLA) — Self-Evolving LLM Agent for Biomedical Research
-- [NanoClaw](https://github.com/qwibitai/nanoclaw) — Lightweight container-based agent architecture
-- [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-sdk) — Anthropic's SDK for building AI agents
-
-## Acknowledgments
-
-This project was developed in the **Le Cong Lab** at Stanford University and the **Mengdi Wang Lab** at Princeton University.
 
 ## License
 

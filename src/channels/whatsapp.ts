@@ -1,4 +1,3 @@
-import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -18,6 +17,7 @@ import {
   updateChatName,
 } from '../db.js';
 import { logger } from '../logger.js';
+import { getWhatsAppBrowser, notifyAuthRequired } from '../platform.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -38,6 +38,7 @@ export class WhatsAppChannel implements Channel {
   private outgoingQueue: Array<{ jid: string; text: string }> = [];
   private flushing = false;
   private groupSyncTimerStarted = false;
+  private connectReject?: (err: Error) => void;
 
   private opts: WhatsAppChannelOpts;
 
@@ -47,6 +48,7 @@ export class WhatsAppChannel implements Channel {
 
   async connect(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      this.connectReject = reject;
       this.connectInternal(resolve).catch(reject);
     });
   }
@@ -74,7 +76,7 @@ export class WhatsAppChannel implements Channel {
       ...(version ? { version } : {}),
       printQRInTerminal: false,
       logger,
-      browser: Browsers.macOS('Chrome'),
+      browser: getWhatsAppBrowser('Chrome'),
     });
 
     this.sock.ev.on('connection.update', (update) => {
@@ -84,9 +86,7 @@ export class WhatsAppChannel implements Channel {
         const msg =
           'WhatsApp authentication required. Run /setup in Claude Code.';
         logger.error(msg);
-        exec(
-          `osascript -e 'display notification "${msg}" with title "BioClaw" sound name "Basso"'`,
-        );
+        notifyAuthRequired(msg);
         setTimeout(() => process.exit(1), 1000);
       }
 

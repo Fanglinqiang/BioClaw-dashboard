@@ -66,7 +66,9 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     anndata \
     pysam \
     requests \
-    multiqc
+    multiqc \
+    cnsplots \
+    pyGenomeTracks
 
 # Install AutoResearchClaw and LiteLLM (OpenAI-compat proxy for Anthropic API)
 RUN pip3 install --no-cache-dir --break-system-packages \

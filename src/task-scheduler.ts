@@ -16,6 +16,7 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  logTokenUsage,
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -42,6 +43,8 @@ async function runTask(
     { taskId: task.id, group: task.group_folder },
     'Running scheduled task',
   );
+
+  // next_run was already advanced by the scheduler loop before enqueuing.
 
   const groups = deps.registeredGroups();
   const group = Object.values(groups).find(
@@ -136,6 +139,23 @@ async function runTask(
       result = output.result;
     }
 
+    // Log token usage from container agent
+    if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
+      logTokenUsage({
+        group_folder: task.group_folder,
+        agent_type: 'claude',
+        input_tokens: output.usage.input_tokens,
+        output_tokens: output.usage.output_tokens,
+        cache_read_tokens: output.usage.cache_read_tokens,
+        cache_creation_tokens: output.usage.cache_creation_tokens,
+        cost_usd: output.usage.cost_usd,
+        duration_ms: output.usage.duration_ms,
+        num_turns: output.usage.num_turns,
+        source: 'task',
+        task_id: task.id,
+      });
+    }
+
     logger.info(
       { taskId: task.id, durationMs: Date.now() - startTime },
       'Task completed',
@@ -199,6 +219,22 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         const currentTask = getTaskById(task.id);
         if (!currentTask || currentTask.status !== 'active') {
           continue;
+        }
+
+        // Advance next_run BEFORE enqueuing to prevent duplicate triggers.
+        // Without this, a slow-starting task (queued behind an active container)
+        // would still have the old next_run when the next scheduler poll fires,
+        // causing getDueTasks() to return it again.
+        let nextRun: string | null = null;
+        if (currentTask.schedule_type === 'cron') {
+          const interval = CronExpressionParser.parse(currentTask.schedule_value, { tz: TIMEZONE });
+          nextRun = interval.next().toISOString();
+        } else if (currentTask.schedule_type === 'interval') {
+          const ms = parseInt(currentTask.schedule_value, 10);
+          nextRun = new Date(Date.now() + ms).toISOString();
+        }
+        if (nextRun) {
+          updateTaskAfterRun(currentTask.id, nextRun, '(pending)');
         }
 
         deps.queue.enqueueTask(

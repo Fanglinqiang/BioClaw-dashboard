@@ -1,15 +1,28 @@
+import { loadEnvFile } from './env.js';
+import { getHomeDir } from './platform.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+loadEnvFile();
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Bioclaw';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
+export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP !== 'false';
+export const ENABLE_LOCAL_WEB = process.env.ENABLE_LOCAL_WEB === 'true';
+export const LOCAL_WEB_HOST = process.env.LOCAL_WEB_HOST || '127.0.0.1';
+export const LOCAL_WEB_PORT = parseInt(process.env.LOCAL_WEB_PORT || '3210', 10);
+export const LOCAL_WEB_GROUP_JID =
+  process.env.LOCAL_WEB_GROUP_JID || 'local-web@local.web';
+export const LOCAL_WEB_GROUP_NAME =
+  process.env.LOCAL_WEB_GROUP_NAME || 'Local Web Chat';
+export const LOCAL_WEB_GROUP_FOLDER =
+  process.env.LOCAL_WEB_GROUP_FOLDER || 'local-web';
+export const LOCAL_WEB_SECRET = process.env.LOCAL_WEB_SECRET || '';
 
 // Absolute paths needed for container mounts
-// Use import.meta.url so paths are correct regardless of process.cwd()
-// dist/config.js -> ../../ -> project root
-const PROJECT_ROOT = path.resolve(fileURLToPath(import.meta.url), '../..');
-const HOME_DIR = process.env.HOME || '/Users/user';
+const PROJECT_ROOT = process.cwd();
+const HOME_DIR = getHomeDir();
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
@@ -62,10 +75,32 @@ export const TIMEZONE =
 
 // MiniMax (optional)
 export const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
-export const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.chat/v1';
-export const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'MiniMax-Text-01';
+export const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimax.chat/v1';
+export const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'MiniMax-M2.5';
 
-// Qwen (optional)
-export const QWEN_API_BASE = process.env.QWEN_API_BASE || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+// Qwen (optional — set via env or .env file)
+export const QWEN_API_BASE = process.env.QWEN_API_BASE || '';
 export const QWEN_AUTH_TOKEN = process.env.QWEN_AUTH_TOKEN || '';
-export const QWEN_MODEL = process.env.QWEN_MODEL || 'qwen-plus';
+export const QWEN_MODEL = process.env.QWEN_MODEL || '';
+
+// WeCom (optional — set via env or .env file)
+export const WECOM_BOT_ID = process.env.WECOM_BOT_ID || "";
+export const WECOM_SECRET = process.env.WECOM_SECRET || "";
+export const WECOM2_BOT_ID = process.env.WECOM2_BOT_ID || "";
+export const WECOM2_SECRET = process.env.WECOM2_SECRET || "";
+export const WECOM3_BOT_ID = process.env.WECOM3_BOT_ID || "";
+export const WECOM3_SECRET = process.env.WECOM3_SECRET || "";
+export const WECOM_CORP_ID = process.env.WECOM_CORP_ID || "";
+export const WECOM_CORP_SECRET = process.env.WECOM_CORP_SECRET || "";
+export const WECOM_AGENT_ID = parseInt(process.env.WECOM_AGENT_ID || "0", 10);
+
+// Feishu / Lark (optional — set via env or .env file)
+export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
+export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+export const FEISHU_DEFAULT_FOLDER = process.env.FEISHU_DEFAULT_FOLDER || 'main';
+export const FEISHU2_APP_ID = process.env.FEISHU2_APP_ID || '';
+export const FEISHU2_APP_SECRET = process.env.FEISHU2_APP_SECRET || '';
+export const FEISHU2_DEFAULT_FOLDER = process.env.FEISHU2_DEFAULT_FOLDER || '';
+export const FEISHU3_APP_ID = process.env.FEISHU3_APP_ID || '';
+export const FEISHU3_APP_SECRET = process.env.FEISHU3_APP_SECRET || '';
+export const FEISHU3_DEFAULT_FOLDER = process.env.FEISHU3_DEFAULT_FOLDER || '';

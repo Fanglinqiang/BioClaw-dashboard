@@ -5,15 +5,43 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
+  ENABLE_LOCAL_WEB,
+  ENABLE_WHATSAPP,
   IDLE_TIMEOUT,
+  LOCAL_WEB_GROUP_FOLDER,
+  LOCAL_WEB_GROUP_JID,
+  LOCAL_WEB_GROUP_NAME,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  STORE_DIR,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ONLY,
   TRIGGER_PATTERN,
+  WECOM_BOT_ID,
+  WECOM_SECRET,
+  WECOM2_BOT_ID,
+  WECOM2_SECRET,
+  WECOM3_BOT_ID,
+  WECOM3_SECRET,
+  WECOM_CORP_ID,
+  WECOM_CORP_SECRET,
+  WECOM_AGENT_ID,
+  FEISHU_APP_ID,
+  FEISHU_APP_SECRET,
+  FEISHU_DEFAULT_FOLDER,
+  FEISHU2_APP_ID,
+  FEISHU2_APP_SECRET,
+  FEISHU2_DEFAULT_FOLDER,
+  FEISHU3_APP_ID,
+  FEISHU3_APP_SECRET,
+  FEISHU3_DEFAULT_FOLDER,
 } from './config.js';
+import { LocalWebChannel } from './channels/local-web.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { TelegramChannel } from './channels/telegram.js';
+import { WeComChannel } from './channels/wecom.js';
+import { FeishuChannel } from './channels/feishu.js';
+import { DiscordChannel } from './channels/discord.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -29,6 +57,7 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  logTokenUsage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -52,9 +81,32 @@ let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
-let whatsapp: WhatsAppChannel;
+let whatsapp: WhatsAppChannel | undefined;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+function channelForJid(jid: string): Channel | undefined {
+  return channels.find(ch => ch.ownsJid(jid));
+}
+
+async function sendToChannel(jid: string, text: string): Promise<void> {
+  const ch = channelForJid(jid);
+  if (!ch) {
+    logger.warn({ jid }, 'No channel owns this JID, cannot send');
+    return;
+  }
+  const formatted = ch.prefixAssistantName ? `${ASSISTANT_NAME}: ${text}` : text;
+  await ch.sendMessage(jid, formatted);
+}
+
+async function sendImageToChannel(jid: string, imagePath: string, caption?: string): Promise<void> {
+  const ch = channelForJid(jid);
+  if (!ch?.sendImage) {
+    logger.warn({ jid }, 'No channel with image support for this JID');
+    return;
+  }
+  await ch.sendImage(jid, imagePath, caption);
+}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -104,7 +156,15 @@ export function getAvailableGroups(): import('./container-runner.js').AvailableG
   const registeredJids = new Set(Object.keys(registeredGroups));
 
   return chats
-    .filter((c) => c.jid !== '__group_sync__' && (c.jid.endsWith('@g.us') || c.jid.startsWith('tg:')))
+    .filter(
+      (c) =>
+        c.jid !== '__group_sync__' &&
+        (c.jid.endsWith('@g.us') ||
+          c.jid.endsWith('@local.web') ||
+          c.jid.startsWith('tg:') ||
+          c.jid.startsWith('wc') ||
+          c.jid.startsWith('fs')),
+    )
     .map((c) => ({
       jid: c.jid,
       name: c.name,
@@ -125,6 +185,11 @@ export function _setRegisteredGroups(groups: Record<string, RegisteredGroup>): v
 async function processGroupMessages(chatJid: string): Promise<boolean> {
   const group = registeredGroups[chatJid];
   if (!group) return true;
+  const channel = findChannel(channels, chatJid);
+  if (!channel) {
+    logger.warn({ chatJid }, 'No channel found for group');
+    return true;
+  }
 
   const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
 
@@ -170,16 +235,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }, IDLE_TIMEOUT);
   };
 
-  const channel = findChannel(channels, chatJid);
-  await channel?.setTyping?.(chatJid, true);
+  await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text && channel) {
@@ -189,7 +251,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           outputSentToUser = true;
         }
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
 
@@ -198,7 +259,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   });
 
-  await channel?.setTyping?.(chatJid, false);
+  await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
@@ -252,12 +313,27 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID and log token usage from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
+        }
+        // Log token usage as soon as we receive it (don't wait for container exit)
+        if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
+          logTokenUsage({
+            group_folder: group.folder,
+            agent_type: 'claude',
+            input_tokens: output.usage.input_tokens,
+            output_tokens: output.usage.output_tokens,
+            cache_read_tokens: output.usage.cache_read_tokens,
+            cache_creation_tokens: output.usage.cache_creation_tokens,
+            cost_usd: output.usage.cost_usd,
+            duration_ms: output.usage.duration_ms,
+            num_turns: output.usage.num_turns,
+            source: 'message',
+          });
         }
         await onOutput(output);
       }
@@ -412,6 +488,7 @@ function ensureDockerRunning(): void {
     console.error('║  Agents cannot run without Docker. To fix:                     ║');
     console.error('║  macOS: Start Docker Desktop                                   ║');
     console.error('║  Linux: sudo systemctl start docker                            ║');
+    console.error('║  Windows: Start Docker Desktop (prefer WSL2 backend)           ║');
     console.error('║                                                                ║');
     console.error('║  Install from: https://docker.com/products/docker-desktop      ║');
     console.error('╚════════════════════════════════════════════════════════════════╝\n');
@@ -448,28 +525,39 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
-    for (const ch of channels) await ch.disconnect();
+    await Promise.all(channels.map((channel) => channel.disconnect()));
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   const channelOpts = {
-    onMessage: (chatJid: string, msg: NewMessage) => storeMessage(msg),
+    onMessage: (_chatJid: string, msg: NewMessage) => storeMessage(msg),
     onChatMetadata: (chatJid: string, timestamp: string, name?: string) =>
       storeChatMetadata(chatJid, timestamp, name),
     registeredGroups: () => registeredGroups,
   };
 
   // Create and connect channels
+  // WhatsApp: only attempt if not TELEGRAM_ONLY and auth credentials exist
   if (!TELEGRAM_ONLY) {
-    whatsapp = new WhatsAppChannel({
-      onMessage: channelOpts.onMessage,
-      onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
-      registeredGroups: () => registeredGroups,
-    });
-    channels.push(whatsapp);
-    await whatsapp.connect();
+    const authCredsPath = path.join(STORE_DIR, 'auth', 'creds.json');
+    if (fs.existsSync(authCredsPath)) {
+      whatsapp = new WhatsAppChannel({
+        onMessage: channelOpts.onMessage,
+        onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+        registeredGroups: () => registeredGroups,
+      });
+      try {
+        channels.push(whatsapp);
+        await whatsapp.connect();
+      } catch (err) {
+        channels.splice(channels.indexOf(whatsapp), 1);
+        logger.warn({ err }, 'WhatsApp connection failed — run /setup to re-authenticate.');
+      }
+    } else {
+      logger.info('WhatsApp auth not found, skipping. Use /setup to configure.');
+    }
   }
 
   if (TELEGRAM_BOT_TOKEN) {
@@ -478,7 +566,107 @@ async function main(): Promise<void> {
     await telegram.connect();
   }
 
-  // Start subsystems (independently of connection handler)
+  if (WECOM_BOT_ID && WECOM_SECRET) {
+    const wecom = new WeComChannel(WECOM_BOT_ID, WECOM_SECRET, { ...channelOpts, corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
+    channels.push(wecom);
+    await wecom.connect();
+  }
+
+  if (WECOM2_BOT_ID && WECOM2_SECRET) {
+    const wecom2 = new WeComChannel(WECOM2_BOT_ID, WECOM2_SECRET, { ...channelOpts, jidPrefix: 'wc2:', corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
+    channels.push(wecom2);
+    await wecom2.connect();
+  }
+
+  if (WECOM3_BOT_ID && WECOM3_SECRET) {
+    const wecom3 = new WeComChannel(WECOM3_BOT_ID, WECOM3_SECRET, { ...channelOpts, jidPrefix: 'wc3:', corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
+    channels.push(wecom3);
+    await wecom3.connect();
+  }
+
+  if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
+    const feishu = new FeishuChannel(FEISHU_APP_ID, FEISHU_APP_SECRET, {
+      ...channelOpts,
+      defaultFolder: FEISHU_DEFAULT_FOLDER || undefined,
+      onRegisterGroup: FEISHU_DEFAULT_FOLDER ? registerGroup : undefined,
+    });
+    channels.push(feishu);
+    await feishu.connect();
+  }
+
+  if (FEISHU2_APP_ID && FEISHU2_APP_SECRET) {
+    const feishu2 = new FeishuChannel(FEISHU2_APP_ID, FEISHU2_APP_SECRET, {
+      ...channelOpts,
+      jidPrefix: 'fs2:',
+      defaultFolder: FEISHU2_DEFAULT_FOLDER || undefined,
+      onRegisterGroup: FEISHU2_DEFAULT_FOLDER ? registerGroup : undefined,
+    });
+    channels.push(feishu2);
+    await feishu2.connect();
+  }
+
+  if (FEISHU3_APP_ID && FEISHU3_APP_SECRET) {
+    const feishu3 = new FeishuChannel(FEISHU3_APP_ID, FEISHU3_APP_SECRET, {
+      ...channelOpts,
+      jidPrefix: 'fs3:',
+      defaultFolder: FEISHU3_DEFAULT_FOLDER || undefined,
+      onRegisterGroup: FEISHU3_DEFAULT_FOLDER ? registerGroup : undefined,
+    });
+    channels.push(feishu3);
+    await feishu3.connect();
+  }
+
+  // LocalWeb channel (upstream addition — optional, only if ENABLE_LOCAL_WEB is set)
+  if (ENABLE_LOCAL_WEB) {
+    if (!registeredGroups[LOCAL_WEB_GROUP_JID]) {
+      const folderConflict = Object.entries(registeredGroups).find(
+        ([jid, group]) =>
+          jid !== LOCAL_WEB_GROUP_JID && group.folder === LOCAL_WEB_GROUP_FOLDER,
+      );
+      if (folderConflict) {
+        logger.warn(
+          {
+            localWebJid: LOCAL_WEB_GROUP_JID,
+            folder: LOCAL_WEB_GROUP_FOLDER,
+            conflictJid: folderConflict[0],
+          },
+          'Skipping local web auto-registration because folder is already in use',
+        );
+      } else {
+        registerGroup(LOCAL_WEB_GROUP_JID, {
+          name: LOCAL_WEB_GROUP_NAME,
+          folder: LOCAL_WEB_GROUP_FOLDER,
+          trigger: `@${ASSISTANT_NAME}`,
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+        });
+      }
+    }
+
+    const localWeb = new LocalWebChannel({
+      onMessage: (_chatJid, msg) => storeMessage(msg),
+      onChatMetadata: (chatJid, timestamp, name) =>
+        storeChatMetadata(chatJid, timestamp, name),
+    });
+    channels.push(localWeb);
+    await localWeb.connect();
+  }
+
+  // Discord channel (upstream addition — optional, only if token is configured)
+  const discordToken = process.env.DISCORD_BOT_TOKEN;
+  if (discordToken) {
+    const discord = new DiscordChannel({ token: discordToken, ...channelOpts });
+    channels.push(discord);
+    try {
+      await discord.connect();
+    } catch (err) {
+      logger.error({ err }, 'Discord connection failed, continuing without it');
+    }
+  } else {
+    logger.info('Discord not configured (set DISCORD_BOT_TOKEN to enable)');
+  }
+
+  // Start subsystems
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
@@ -497,7 +685,7 @@ async function main(): Promise<void> {
       if (!ch) throw new Error(`No channel for JID: ${jid}`);
       return ch.sendMessage(jid, text);
     },
-    sendImage: (jid, imagePath, caption) => whatsapp?.sendImage(jid, imagePath, caption),
+    sendImage: (jid, imagePath, caption) => whatsapp?.sendImage(jid, imagePath, caption) ?? Promise.resolve(),
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),
