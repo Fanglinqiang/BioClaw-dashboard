@@ -685,7 +685,7 @@ async function main(): Promise<void> {
       if (!ch) throw new Error(`No channel for JID: ${jid}`);
       return ch.sendMessage(jid, text);
     },
-    sendImage: (jid, imagePath, caption) => whatsapp?.sendImage(jid, imagePath, caption) ?? Promise.resolve(),
+    sendImage: (jid, imagePath, caption) => sendImageToChannel(jid, imagePath, caption),
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),
