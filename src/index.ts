@@ -600,10 +600,7 @@ async function main(): Promise<void> {
     registerGroup,
     sendMessage: (jid, text) => sendToChannel(jid, text),
     sendImage: (jid, imagePath, caption) => sendImageToChannel(jid, imagePath, caption),
-    syncGroupMetadata: async (force) => {
-      if (!whatsapp) return;
-      await whatsapp.syncGroupMetadata(force);
-    },
+    syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force),
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
   });
