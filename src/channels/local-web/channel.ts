@@ -1180,10 +1180,16 @@ export class LocalWebChannel implements Channel {
 
   async sendImage(jid: string, imagePath: string, caption?: string): Promise<void> {
     const filename = path.basename(imagePath);
-    const fallback = caption
-      ? `${caption}\n[Image generated: ${filename}]`
-      : `[Image generated: ${filename}]`;
-    await this.sendMessage(jid, fallback);
+    // Copy image to group dir so it can be served via /files/
+    const imagesDir = path.join(GROUPS_DIR, LOCAL_WEB_GROUP_FOLDER, 'images');
+    fs.mkdirSync(imagesDir, { recursive: true });
+    const destPath = path.join(imagesDir, `${Date.now()}-${filename}`);
+    fs.copyFileSync(imagePath, destPath);
+    const webPath = `/files/images/${path.basename(destPath)}`;
+    const content = caption
+      ? `${caption}\n\n![${caption}](${webPath})`
+      : `![image](${webPath})`;
+    await this.sendMessage(jid, content);
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1252,8 +1258,18 @@ export class LocalWebChannel implements Channel {
         sendJson(res, 404, { error: 'File not found' });
         return;
       }
+      const ext = path.extname(absolutePath).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.pdf': 'application/pdf',
+      };
       res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
       res.end(fs.readFileSync(absolutePath));
       return;
     }
