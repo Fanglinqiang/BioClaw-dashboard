@@ -18,6 +18,15 @@ export const LOCAL_WEB_GROUP_NAME =
 export const LOCAL_WEB_GROUP_FOLDER =
   process.env.LOCAL_WEB_GROUP_FOLDER || 'local-web';
 export const LOCAL_WEB_SECRET = process.env.LOCAL_WEB_SECRET || '';
+export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
+export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+export const FEISHU_CONNECTION_MODE =
+  (process.env.FEISHU_CONNECTION_MODE || 'websocket').toLowerCase();
+export const FEISHU_VERIFICATION_TOKEN = process.env.FEISHU_VERIFICATION_TOKEN || '';
+export const FEISHU_ENCRYPT_KEY = process.env.FEISHU_ENCRYPT_KEY || '';
+export const FEISHU_HOST = process.env.FEISHU_HOST || '0.0.0.0';
+export const FEISHU_PORT = parseInt(process.env.FEISHU_PORT || '8080', 10);
+export const FEISHU_PATH = process.env.FEISHU_PATH || '/feishu/events';
 
 /** If set, require Authorization: Bearer <token> or ?token= on trace API routes */
 export const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';

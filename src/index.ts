@@ -9,6 +9,14 @@ import {
   ASSISTANT_NAME,
   ENABLE_LOCAL_WEB,
   ENABLE_WHATSAPP,
+  FEISHU_APP_ID,
+  FEISHU_APP_SECRET,
+  FEISHU_CONNECTION_MODE,
+  FEISHU_ENCRYPT_KEY,
+  FEISHU_HOST,
+  FEISHU_PATH,
+  FEISHU_PORT,
+  FEISHU_VERIFICATION_TOKEN,
   IDLE_TIMEOUT,
   LOCAL_WEB_GROUP_FOLDER,
   LOCAL_WEB_GROUP_JID,
@@ -44,6 +52,7 @@ import {
 } from './session-manager.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { LocalWebChannel } from './channels/local-web/channel.js';
+import { FeishuChannel } from './channels/feishu.js';
 import { WhatsAppChannel } from './channels/whatsapp/channel.js';
 import { WeComChannel } from './channels/wecom.js';
 import { DiscordChannel } from './channels/discord.js';
@@ -228,7 +237,7 @@ async function main(): Promise<void> {
 
   const channelCallbacks = {
     onMessage: (_chatJid: string, msg: NewMessage) => storeMessage(msg),
-    onChatMetadata: (chatJid: string, timestamp: string) => storeChatMetadata(chatJid, timestamp),
+    onChatMetadata: (chatJid: string, timestamp: string, name?: string) => storeChatMetadata(chatJid, timestamp, name),
     registeredGroups: () => getRegisteredGroupsMap(),
     autoRegister: (jid: string, name: string, channelName: string) => {
       if (getRegisteredGroupsMap()[jid]) return;
@@ -250,6 +259,22 @@ async function main(): Promise<void> {
     const localWeb = new LocalWebChannel({ onMessage: (_jid, msg) => storeMessage(msg), onChatMetadata: (jid, ts, name) => storeChatMetadata(jid, ts, name) });
     channels.push(localWeb);
     await localWeb.connect();
+  }
+
+  if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
+    const feishu = new FeishuChannel({
+      appId: FEISHU_APP_ID,
+      appSecret: FEISHU_APP_SECRET,
+      connectionMode: FEISHU_CONNECTION_MODE === 'webhook' ? 'webhook' : 'websocket',
+      verificationToken: FEISHU_VERIFICATION_TOKEN || undefined,
+      encryptKey: FEISHU_ENCRYPT_KEY || undefined,
+      host: FEISHU_HOST,
+      port: FEISHU_PORT,
+      path: FEISHU_PATH,
+      ...channelCallbacks,
+    });
+    channels.push(feishu);
+    try { await feishu.connect(); } catch (err) { logger.error({ err }, 'Feishu connection failed'); }
   }
 
   if (process.env.WECOM_BOT_ID && process.env.WECOM_SECRET) {

@@ -50,6 +50,37 @@ The server IP must be on that app’s trusted IP whitelist.
 
 ---
 
+## Feishu (Lark)
+
+BioClaw currently supports **text receive/reply** for Feishu bots. Start with **WebSocket mode** if possible; use webhook mode only when your deployment requires inbound HTTP callbacks.
+
+1. Create a bot app in the [Feishu Open Platform](https://open.feishu.cn/).
+2. Enable the **message receive** event for your bot and grant the permissions needed to read and send IM messages.
+3. Add to `.env`:
+
+   ```bash
+   FEISHU_APP_ID=cli_xxx
+   FEISHU_APP_SECRET=your-app-secret
+   FEISHU_CONNECTION_MODE=websocket
+   ```
+
+4. If you use **webhook** mode, also configure:
+
+   ```bash
+   FEISHU_CONNECTION_MODE=webhook
+   FEISHU_VERIFICATION_TOKEN=your-verification-token
+   FEISHU_ENCRYPT_KEY=your-encrypt-key
+   FEISHU_HOST=0.0.0.0
+   FEISHU_PORT=8080
+   FEISHU_PATH=/feishu/events
+   ```
+
+5. Invite the bot into a Feishu chat or group and send the first message. BioClaw auto-registers the conversation and can reply in text.
+
+Current limitations: image/file sending is not implemented yet.
+
+---
+
 ## Discord
 
 1. Open the [Discord Developer Portal](https://discord.com/developers/applications).
@@ -125,6 +156,6 @@ Optional: `LOCAL_WEB_SECRET` to require a shared secret on the webhook.
 ## Disabling channels
 
 - **WhatsApp only off:** `DISABLE_WHATSAPP=1` or `ENABLE_WHATSAPP=false` (other channels can still run if configured).
-- **WeCom / Discord / Slack:** Remove or leave empty their token variables if you do not use them.
+- **Feishu / WeCom / Discord / Slack:** Remove or leave empty their token variables if you do not use them.
 
 See `.env.example` for all channel-related variables.

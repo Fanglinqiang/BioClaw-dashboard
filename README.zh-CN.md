@@ -38,7 +38,7 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 - 差异分析可视化（火山图等）
 - 文献检索与摘要
 
-默认通道为 WhatsApp；企业微信、Discord、本地网页等配置见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**。QQ / 飞书相关截图为路线图示意，详见该文档。
+默认通道为 WhatsApp；飞书、企业微信、Discord、Slack、本地网页等配置见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**。飞书的完整配置、OpenRouter 设置、群聊限制与排障见 **[docs/FEISHU_SETUP.zh-CN.md](docs/FEISHU_SETUP.zh-CN.md)**。QQ 相关截图仍为路线图示意，详见该文档。
 
 ## 快速开始
 
