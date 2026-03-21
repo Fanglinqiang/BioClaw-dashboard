@@ -7,6 +7,7 @@ import {
   getAgentTraceEvents,
   getAllChats,
   getMessagesSince,
+  getRecentMessages,
   getNewMessages,
   getTaskById,
   insertAgentTraceEvent,
@@ -93,9 +94,10 @@ describe('storeMessage', () => {
       is_from_me: true,
     });
 
-    // Message is stored (we can retrieve it — is_from_me doesn't affect retrieval)
-    const messages = getMessagesSince('group@g.us', '2024-01-01T00:00:00.000Z', 'BotName');
+    // Verify the row is stored with its author flag intact.
+    const messages = getRecentMessages('group@g.us');
     expect(messages).toHaveLength(1);
+    expect(messages[0].is_from_me).toBe(1);
   });
 
   it('upserts on duplicate id+chat_jid', () => {
