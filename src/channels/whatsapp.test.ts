@@ -29,7 +29,7 @@ const {
 }));
 
 // Mock db
-vi.mock('../db.js', () => ({
+vi.mock('../db/index.js', () => ({
   getLastGroupSync: mockGetLastGroupSync,
   setLastGroupSync: mockSetLastGroupSync,
   updateChatName: mockUpdateChatName,
