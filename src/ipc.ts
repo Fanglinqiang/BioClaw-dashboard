@@ -11,8 +11,9 @@ import {
   MAIN_GROUP_FOLDER,
   TIMEZONE,
 } from './config.js';
-import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { recordAgentTraceEvent } from './agent-trace.js';
+import { AvailableGroup } from './group-folder.js';
+import { createTask, deleteTask, getTaskById, updateTask } from './db/index.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -89,6 +90,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       data.chatJid,
                       `${ASSISTANT_NAME}: ${data.text}`,
                     );
+                    recordAgentTraceEvent({
+                      group_folder: sourceGroup,
+                      chat_jid: data.chatJid,
+                      session_id: null,
+                      type: 'ipc_send',
+                      payload: {
+                        kind: 'text',
+                        length: data.text.length,
+                        preview: String(data.text).slice(0, 200),
+                      },
+                    });
                     logger.info(
                       { chatJid: data.chatJid, sourceGroup },
                       'IPC message sent',
@@ -120,6 +132,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     }
                     if (fs.existsSync(hostImagePath)) {
                       await deps.sendImage(data.chatJid, hostImagePath, data.caption);
+                      recordAgentTraceEvent({
+                        group_folder: sourceGroup,
+                        chat_jid: data.chatJid,
+                        session_id: null,
+                        type: 'ipc_send',
+                        payload: {
+                          kind: 'image',
+                          filePath: data.filePath,
+                          caption: data.caption ?? null,
+                        },
+                      });
                       logger.info(
                         { chatJid: data.chatJid, sourceGroup, filePath: data.filePath },
                         'IPC image sent',
@@ -150,10 +173,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     (targetGroup && targetGroup.folder === sourceGroup)
                   ) {
                     // Try IPC files dir first, then fall back to group dir
-                    // (agent may use send_file tool → files/xxx, or write IPC JSON with container path like workspace/group/xxx)
                     let resolvedPath = path.join(ipcBaseDir, sourceGroup, data.filePath);
                     if (!fs.existsSync(resolvedPath)) {
-                      // Map container path /workspace/group/xxx to host groups dir
                       const normalized = data.filePath.replace(/^\//, '');
                       if (normalized.startsWith('workspace/group/')) {
                         const relPath = normalized.slice('workspace/group/'.length);
@@ -184,6 +205,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     );
                   }
                 }
+              } else if (data.type === 'agent_step') {
+                recordAgentTraceEvent({
+                  group_folder: sourceGroup,
+                  chat_jid: data.chatJid ?? null,
+                  session_id: null,
+                  type: `agent_${data.stepType}`,
+                  payload: {
+                    stepType: data.stepType,
+                    text: data.text ?? null,
+                    toolName: data.toolName ?? null,
+                    toolInput: data.toolInput ?? null,
+                  },
+                });
               }
               fs.unlinkSync(filePath);
             } catch (err) {

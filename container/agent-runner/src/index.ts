@@ -344,9 +344,9 @@ function getBioSystemPrompt(): string {
     '- QC summary plots: compact multi-panel layout, consistent colors, short labels, and clear sample ordering.',
     '- Protein structure renders: prefer clean cartoon/surface representations, high-resolution output, sensible orientation, and focused highlighting of the biologically relevant region.',
     'Reusable built-in scripts are available and should be preferred for consistent output when they fit the task:',
-    '- /home/node/.claude/skills/bio-tools/volcano_plot_template.py',
-    '- /home/node/.claude/skills/bio-tools/qc_summary_plot_template.py',
-    '- /home/node/.claude/skills/bio-tools/pymol_render_template.py',
+    '- /home/node/.claude/skills/bio-tools/templates/volcano_plot_template.py',
+    '- /home/node/.claude/skills/bio-tools/templates/qc_summary_plot_template.py',
+    '- /home/node/.claude/skills/bio-tools/templates/pymol_render_template.py',
     'For publication-ready figures (Cell/Nature/Science style): use cnsplots (volcano, box, heatmap, etc.). For genome browser tracks: use pyGenomeTracks with make_tracks_file + pyGenomeTracks.',
     'Before sending an image, quickly sanity-check that labels are legible, colors are not confusing, and the figure communicates one clear message.',
     'Keep messages concise and action-oriented, and mention important output file paths when relevant.',
@@ -660,6 +660,14 @@ async function runQuery(
     const messages = drainIpcInput();
     for (const text of messages) {
       log(`Piping IPC message into active query (${text.length} chars)`);
+      // Signal query boundary so trace UI shows a separate task card
+      writeIpcFile(IPC_MESSAGES_DIR, {
+        type: 'agent_step',
+        stepType: 'query_start',
+        text: text.slice(0, 500),
+        groupFolder: containerInput.groupFolder,
+        timestamp: new Date().toISOString(),
+      });
       stream.push(text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
@@ -746,6 +754,34 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      // Emit agent thinking/tool_use steps to IPC for trace display
+      try {
+        const msg = message as { uuid: string; message?: { content?: unknown[] } };
+        const content = msg.message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            const b = block as Record<string, unknown>;
+            if (b.type === 'text' && typeof b.text === 'string') {
+              writeIpcFile(IPC_MESSAGES_DIR, {
+                type: 'agent_step',
+                stepType: 'thinking',
+                text: (b.text as string).slice(0, 2000),
+                groupFolder: containerInput.groupFolder,
+                timestamp: new Date().toISOString(),
+              });
+            } else if (b.type === 'tool_use') {
+              writeIpcFile(IPC_MESSAGES_DIR, {
+                type: 'agent_step',
+                stepType: 'tool_use',
+                toolName: b.name as string,
+                toolInput: JSON.stringify(b.input ?? {}).slice(0, 1000),
+                groupFolder: containerInput.groupFolder,
+                timestamp: new Date().toISOString(),
+              });
+            }
+          }
+        }
+      } catch { /* don't break the loop */ }
     }
 
     // Emit events for display in dashboard chat
@@ -920,6 +956,11 @@ async function runBashTool(command: string, env: Record<string, string | undefin
       maxBuffer: 10 * 1024 * 1024,
       shell: '/bin/bash',
     });
+
+    // Log bash output to stderr so it appears in host logs
+    if (stdout.trim() || stderr.trim()) {
+      log(`[bash] ${[stdout.trim(), stderr.trim()].filter(Boolean).join('\n')}`);
+    }
 
     const combined = [stdout, stderr].filter(Boolean).join(stderr && stdout ? '\n' : '');
     return truncateOutput(combined || 'Command completed with no output.');
@@ -1179,6 +1220,15 @@ async function main(): Promise<void> {
       }
 
       log(`Got new message (${nextMessage.length} chars), starting new query`);
+      // Signal query boundary so the orchestrator can split trace events into
+      // separate task cards.
+      writeIpcFile(IPC_MESSAGES_DIR, {
+        type: 'agent_step',
+        stepType: 'query_start',
+        text: nextMessage.slice(0, 500),
+        groupFolder: containerInput.groupFolder,
+        timestamp: new Date().toISOString(),
+      });
       prompt = nextMessage;
     }
   } catch (err) {

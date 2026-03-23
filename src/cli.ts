@@ -14,6 +14,7 @@ import {
   DATA_DIR,
 } from './config.js';
 import { logger } from './logger.js';
+import { syncContainerSkillsToSession } from './sync-container-skills.js';
 
 const GROUP_FOLDER = 'cli-test';
 
@@ -40,25 +41,10 @@ function ensureDirs() {
     }, null, 2) + '\n');
   }
 
-  // Copy skills (recursive, handles nested dirs like scripts/)
+  // Copy all container/skills into CLI session (recursive)
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(DATA_DIR, 'sessions', GROUP_FOLDER, '.claude', 'skills');
-  function copyDirRecursive(src: string, dst: string) {
-    fs.mkdirSync(dst, { recursive: true });
-    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-      const s = path.join(src, entry.name);
-      const d = path.join(dst, entry.name);
-      if (entry.isDirectory()) copyDirRecursive(s, d);
-      else fs.copyFileSync(s, d);
-    }
-  }
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      copyDirRecursive(srcDir, path.join(skillsDst, skillDir));
-    }
-  }
+  syncContainerSkillsToSession(skillsSrc, skillsDst);
 }
 
 function readSecrets(): Record<string, string> {

@@ -20,6 +20,7 @@
 
 - [概览](#概览)
 - [快速开始](#快速开始)
+- [消息通道](#消息通道)
 - [示例演示](#示例演示)
 - [系统架构](#系统架构)
 - [内置工具](#内置工具)
@@ -37,13 +38,9 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 - 差异分析可视化（火山图等）
 - 文献检索与摘要
 
-默认通道为 WhatsApp；也可以扩展到 QQ / 飞书（Lark）并对接 DeepSeek。
+默认通道为 WhatsApp；飞书、企业微信、Discord、Slack、本地网页等配置见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**。飞书的完整配置、OpenRouter 设置、群聊限制与排障见 **[docs/FEISHU_SETUP.zh-CN.md](docs/FEISHU_SETUP.zh-CN.md)**。QQ 相关截图仍为路线图示意，详见该文档。
 
 ## 快速开始
-
-> 说明：当前仓库中已实现的消息通道包括 WhatsApp、WeCom（企业微信）、飞书（Lark）和 Discord。QQ 通道展示的是扩展方向，尚未内置。
-
-> 现在也支持一个更适合 Windows 用户的本地网页聊天入口。若你在中国、或者暂时不想接 WhatsApp，可直接走 `HTTP webhook + 本地网页聊天`。
 
 ### 环境要求
 
@@ -54,11 +51,25 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 
 ### 安装
 
+**一键安装**（推荐新手使用）：
+
+```bash
+git clone https://github.com/Runchuan-BU/BioClaw.git
+cd BioClaw
+bash setup.sh
+```
+
+安装脚本会自动检查环境、安装依赖、构建 Docker 镜像，并引导你配置 API 密钥。
+
+**手动安装：**
+
 ```bash
 git clone https://github.com/Runchuan-BU/BioClaw.git
 cd BioClaw
 npm install
-npm start
+cp .env.example .env        # 编辑 .env，配置模型提供方密钥（见下文）
+docker build -t bioclaw-agent:latest container/
+npm start                    # WhatsApp：首次运行请在终端扫描二维码
 ```
 
 ### 模型提供方配置
@@ -114,93 +125,13 @@ npm run dev
 @Bioclaw <你的请求>
 ```
 
-如果你在 Windows 上、或者暂时不想通过 WhatsApp 使用，请先看 [docs/WINDOWS.zh-CN.md](docs/WINDOWS.zh-CN.md)。当前最稳妥的方式是 `WSL2 + Docker Desktop + npm run cli`。
+## 消息通道
 
-如果你想直接在浏览器里聊天，请在 `.env` 中设置 `ENABLE_WHATSAPP=false` 和 `ENABLE_LOCAL_WEB=true`，再执行 `npm run dev`，最后打开 [http://127.0.0.1:3210](http://127.0.0.1:3210)。
+各平台逐步配置、环境变量、本地网页与 **Windows（WSL2）** 说明见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**；其中 Windows 细节补充在 **[docs/WINDOWS.zh-CN.md](docs/WINDOWS.zh-CN.md)**。需要**本地浏览器（对话与实验追踪同一页）**时，在项目根目录执行 **`npm run web`** 即可（仍会读取 `.env`）。
 
-## 频道配置
+英文版通道文档：[docs/CHANNELS.md](docs/CHANNELS.md)。
 
-BioClaw 支持多个聊天平台，通过 `.env` 环境变量启用。
-
-### WhatsApp（默认）
-
-无需额外配置。首次运行时终端会显示二维码，用 WhatsApp 扫描即可。认证状态保存在 `store/auth/`。
-
-### 企业微信（WeCom）
-
-1. 登录[企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)
-2. 进入 **应用与小程序** > **智能机器人** > **创建**
-3. 选择 **API 模式**，连接方式选 **使用长连接**（不是 URL 回调）
-4. 复制 **Bot ID** 和 **Secret**
-5. 添加到 `.env`：
-   ```
-   WECOM_BOT_ID=your-bot-id
-   WECOM_SECRET=your-secret
-   ```
-6. 在企业微信群里添加该机器人，@ 它即可开始对话
-
-**发送图片（可选）：** 需要在管理后台创建一个自建应用，并配置：
-```
-WECOM_CORP_ID=企业ID
-WECOM_AGENT_ID=应用AgentId
-WECOM_CORP_SECRET=应用Secret
-```
-服务器 IP 需加入应用的企业可信 IP 白名单。
-
-### 飞书（Lark）
-
-1. 前往 [飞书开放平台](https://open.feishu.cn/) 创建 **企业自建应用**
-2. 在 **添加应用能力** 中启用 **机器人**
-3. 在 **权限管理** 中开通以下权限：
-   - `im:message` — 接收消息
-   - `im:message:send_as_bot` — 以机器人身份发送消息
-   - `im:resource` — 下载消息中的图片和文件
-   - `im:message.group_msg` — 接收群聊消息
-4. 在 **事件与回调** 中选择 **长连接** 模式
-5. 订阅事件：`im.message.receive_v1`
-6. 复制 **App ID** 和 **App Secret**，添加到 `.env`：
-   ```
-   FEISHU_APP_ID=cli_your_app_id
-   FEISHU_APP_SECRET=your_app_secret
-   ```
-7. 发布应用版本并通过管理员审批
-8. 将机器人添加到群聊或直接发送私聊消息即可开始对话
-
-**自动注册：** 新对话会自动注册，无需手动配置。默认使用 `main` 文件夹，可通过以下配置覆盖：
-```
-FEISHU_DEFAULT_FOLDER=my-folder
-```
-
-**多机器人支持：** 最多可同时运行 3 个飞书机器人（例如不同群使用不同 agent）：
-```
-FEISHU2_APP_ID=cli_second_app_id
-FEISHU2_APP_SECRET=second_app_secret
-FEISHU2_DEFAULT_FOLDER=literature
-
-FEISHU3_APP_ID=cli_third_app_id
-FEISHU3_APP_SECRET=third_app_secret
-FEISHU3_DEFAULT_FOLDER=qwen-agent
-```
-
-### Discord
-
-1. 打开 [Discord Developer Portal](https://discord.com/developers/applications)
-2. 点击 **New Application**，进入 **Bot** > **Add Bot**
-3. 开启 **MESSAGE CONTENT INTENT**（Privileged Gateway Intents 下）
-4. 复制 **Bot Token**，添加到 `.env`：
-   ```
-   DISCORD_BOT_TOKEN=your-bot-token
-   ```
-5. 进入 **OAuth2** > **URL Generator**，勾选 scope `bot`，权限选：发送消息、附加文件、阅读消息历史
-6. 打开生成的链接，将 bot 邀请到你的 Discord 服务器
-7. 在任意频道发消息，bot 自动注册并回复
-
-### 禁用某个频道
-
-如果只想用企业微信/Discord，不启动 WhatsApp：
-```
-DISABLE_WHATSAPP=1
-```
+**Lab trace 观测**（SSE 时间线、工作区树）已内置于本地网页界面，无需额外配置。说明见 [docs/DASHBOARD.md](docs/DASHBOARD.md)。
 
 ### Second Quick Start
 
@@ -212,25 +143,7 @@ install https://github.com/Runchuan-BU/BioClaw
 
 ## 示例演示
 
-### QQ + DeepSeek 示例
-
-<div align="center">
-<img src="docs/images/qq/qq-deepseek-1.jpg" width="420">
-</div>
-
-<div align="center">
-<img src="docs/images/qq/qq-deepseek-2.jpg" width="420">
-</div>
-
-### 飞书（Lark）+ DeepSeek 示例
-
-<div align="center">
-<img src="docs/images/lark/lark-deepseek-1.jpg" width="420">
-</div>
-
-更多任务示例见 [ExampleTask/ExampleTask.md](ExampleTask/ExampleTask.md)。
-
-> 注意：QQ 通道目前是展示示例，尚未内置实现。飞书通道已内置支持，配置 `.env` 即可使用。
+QQ / 飞书路线图示意截图已移至 [docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)。任务类演示见 [ExampleTask/ExampleTask.md](ExampleTask/ExampleTask.md)。
 
 ## 系统架构
 
@@ -271,14 +184,35 @@ BioClaw 基于 NanoClaw 的容器化架构，并融合 STELLA 的生物医学能
 - scanpy
 - pysam
 
+## 实用脚本
+
+所有脚本位于 `scripts/` 目录：
+
+| 命令 | 脚本 | 说明 |
+|------|------|------|
+| `bash setup.sh` | `scripts/setup.sh` | 一键安装：检查环境、安装依赖、构建镜像、配置密钥 |
+| `npm run web` | `scripts/start-web.mjs` | 启动 BioClaw 本地 Web 界面（聊天 + 实验追踪） |
+| `npm run open:web` | `scripts/open-local-web.mjs` | 用默认浏览器打开 Web 界面 |
+| `npm run stop:web` | `scripts/stop-bioclaw-web.mjs` | 停止 Web 服务进程 |
+| `bash scripts/clear-local-web.sh` | `scripts/clear-local-web.sh` | 清空本地 Web 聊天记录和追踪事件 |
+| `npx tsx scripts/test-cli.ts "prompt"` | `scripts/test-cli.ts` | 单次 CLI 测试：发送一个 prompt 到容器 |
+| `npx tsx scripts/manage-groups.ts list` | `scripts/manage-groups.ts` | 管理 WhatsApp 群组注册（list / register / remove） |
+| `python3 scripts/demo.py` | `scripts/demo.py` | TP53 基因分析演示（容器内运行） |
+
 ## 项目结构
 
 ```text
 BioClaw/
-├── src/              # Node.js 编排器
-├── container/        # Agent 镜像与运行器
-├── ExampleTask/      # Demo 任务与截图
-├── docs/images/      # 文档图片资源
+├── src/                   # Node.js 编排器
+├── container/             # Agent 镜像与运行器
+├── scripts/               # 实用脚本（安装、Web、测试）
+├── groups/                # 各群工作区与 CLAUDE.md
+├── docs/
+│   ├── CHANNELS.md        # 消息通道（英文）
+│   ├── CHANNELS.zh-CN.md  # 消息通道（中文）
+│   ├── WINDOWS.zh-CN.md   # Windows / 本地网页
+│   └── images/            # 文档配图
+├── ExampleTask/           # Demo 任务与截图
 └── README.md / README.zh-CN.md
 ```
 

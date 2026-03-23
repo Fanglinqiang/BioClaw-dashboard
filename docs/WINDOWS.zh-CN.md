@@ -5,7 +5,7 @@
 ## 当前现状
 
 - 仓库中的现成消息通道只有 WhatsApp。
-- `README.zh-CN.md` 里提到的 QQ / 飞书（Lark）目前是展示和扩展方向，不是已提交的可直接运行实现。
+- `docs/CHANNELS.zh-CN.md` 中 QQ / 飞书（Lark）截图是展示和扩展方向，不是已提交的可直接运行实现。
 - 对 Windows，当前推荐方案是：
   - Windows 11
   - WSL2
@@ -51,8 +51,8 @@ cp config-examples/.env.local-web.example .env
 ```bash
 ENABLE_WHATSAPP=false
 ENABLE_LOCAL_WEB=true
-LOCAL_WEB_HOST=127.0.0.1
-LOCAL_WEB_PORT=3210
+LOCAL_WEB_HOST=localhost
+LOCAL_WEB_PORT=3000
 LOCAL_WEB_MAX_UPLOAD_MB=200
 
 MODEL_PROVIDER=openai-compatible
@@ -67,10 +67,10 @@ OPENAI_COMPATIBLE_MODEL=your-model-name
   - 关闭 WhatsApp 通道，避免启动时要求 WhatsApp 认证。
 - `ENABLE_LOCAL_WEB=true`
   - 打开本地网页聊天入口。
-- `LOCAL_WEB_HOST=127.0.0.1`
+- `LOCAL_WEB_HOST=localhost`
   - 只允许本机访问，更安全。
-- `LOCAL_WEB_PORT=3210`
-  - 本地网页聊天端口，浏览器稍后会访问 `http://127.0.0.1:3210`。
+- `LOCAL_WEB_PORT=3000`
+  - 本地网页聊天端口，浏览器稍后会访问 `http://localhost:3000`。
 - `LOCAL_WEB_MAX_UPLOAD_MB=200`
   - 本地网页聊天单文件上传上限，默认 200MB。
 - `MODEL_PROVIDER=openai-compatible`
@@ -87,8 +87,8 @@ OPENAI_COMPATIBLE_MODEL=your-model-name
 ```bash
 ENABLE_WHATSAPP=false
 ENABLE_LOCAL_WEB=true
-LOCAL_WEB_HOST=127.0.0.1
-LOCAL_WEB_PORT=3210
+LOCAL_WEB_HOST=localhost
+LOCAL_WEB_PORT=3000
 LOCAL_WEB_MAX_UPLOAD_MB=200
 
 MODEL_PROVIDER=openrouter
@@ -124,7 +124,7 @@ npm run dev
 然后在浏览器打开：
 
 ```text
-http://127.0.0.1:3210
+http://localhost:3000
 ```
 
 你会看到一个本地聊天页面，直接输入问题即可。

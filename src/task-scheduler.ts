@@ -10,7 +10,9 @@ import {
   SCHEDULER_POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
-import { ContainerOutput, runContainerAgent, writeTasksSnapshot } from './container-runner.js';
+import { recordAgentTraceEvent } from './agent-trace.js';
+import { ContainerOutput, runContainerAgent } from './container-runner.js';
+import { writeTasksSnapshot } from './group-folder.js';
 import {
   getAllTasks,
   getDueTasks,
@@ -18,7 +20,7 @@ import {
   logTaskRun,
   logTokenUsage,
   updateTaskAfterRun,
-} from './db.js';
+} from './db/index.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
@@ -105,6 +107,17 @@ async function runTask(
   };
 
   try {
+    recordAgentTraceEvent({
+      group_folder: task.group_folder,
+      chat_jid: task.chat_jid,
+      session_id: sessionId ?? null,
+      type: 'scheduled_run_start',
+      payload: {
+        taskId: task.id,
+        promptPreview: task.prompt.slice(0, 500),
+      },
+    });
+
     const output = await runContainerAgent(
       group,
       {
@@ -118,6 +131,25 @@ async function runTask(
       },
       (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
       async (streamedOutput: ContainerOutput) => {
+        const r =
+          streamedOutput.result == null
+            ? ''
+            : typeof streamedOutput.result === 'string'
+              ? streamedOutput.result
+              : JSON.stringify(streamedOutput.result);
+        recordAgentTraceEvent({
+          group_folder: task.group_folder,
+          chat_jid: task.chat_jid,
+          session_id: sessionId ?? null,
+          type: 'stream_output',
+          payload: {
+            source: 'scheduler',
+            taskId: task.id,
+            status: streamedOutput.status,
+            resultLength: r.length,
+            preview: r.replace(/<internal>[\s\S]*?<\/internal>/g, '').slice(0, 800),
+          },
+        });
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)
@@ -157,6 +189,18 @@ async function runTask(
       });
     }
 
+    recordAgentTraceEvent({
+      group_folder: task.group_folder,
+      chat_jid: task.chat_jid,
+      session_id: sessionId ?? null,
+      type: 'scheduled_run_end',
+      payload: {
+        taskId: task.id,
+        status: error ? 'error' : 'success',
+        error,
+      },
+    });
+
     logger.info(
       { taskId: task.id, durationMs: Date.now() - startTime },
       'Task completed',
@@ -164,6 +208,13 @@ async function runTask(
   } catch (err) {
     if (idleTimer) clearTimeout(idleTimer);
     error = err instanceof Error ? err.message : String(err);
+    recordAgentTraceEvent({
+      group_folder: task.group_folder,
+      chat_jid: task.chat_jid,
+      session_id: sessionId ?? null,
+      type: 'scheduled_run_error',
+      payload: { taskId: task.id, message: error },
+    });
     logger.error({ taskId: task.id, error }, 'Task failed');
   }
 

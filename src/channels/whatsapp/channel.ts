@@ -2,23 +2,24 @@ import fs from 'fs';
 import path from 'path';
 
 import makeWASocket, {
-  Browsers,
   DisconnectReason,
   WASocket,
+  WAMessage,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { STORE_DIR } from '../config.js';
+import { GROUPS_DIR, STORE_DIR } from '../../config.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
   updateChatName,
-} from '../db.js';
-import { logger } from '../logger.js';
-import { getWhatsAppBrowser, notifyAuthRequired } from '../platform.js';
-import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
+} from '../../db/index.js';
+import { logger } from '../../logger.js';
+import { getWhatsAppBrowser, notifyAuthRequired } from '../../platform.js';
+import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -77,6 +78,9 @@ export class WhatsAppChannel implements Channel {
       printQRInTerminal: false,
       logger,
       browser: getWhatsAppBrowser('Chrome'),
+      // Disable history sync to avoid 20s AwaitingInitialSync timeout and "forcing state to Online" WARN.
+      // Bot mainly handles new messages; history sync can block startup on slow networks.
+      shouldSyncHistoryMessage: () => false,
     });
 
     this.sock.ev.on('connection.update', (update) => {
@@ -172,12 +176,7 @@ export class WhatsAppChannel implements Channel {
         // Only deliver full message for registered groups
         const groups = this.opts.registeredGroups();
         if (groups[chatJid]) {
-          const content =
-            msg.message?.conversation ||
-            msg.message?.extendedTextMessage?.text ||
-            msg.message?.imageMessage?.caption ||
-            msg.message?.videoMessage?.caption ||
-            '';
+          const content = await this.buildInboundContent(chatJid, msg, groups[chatJid].folder);
           const sender = msg.key.participant || msg.key.remoteJid || '';
           const senderName = msg.pushName || sender.split('@')[0];
 
@@ -193,6 +192,71 @@ export class WhatsAppChannel implements Channel {
         }
       }
     });
+  }
+
+  private async buildInboundContent(
+    chatJid: string,
+    msg: WAMessage,
+    groupFolder: string,
+  ): Promise<string> {
+    const textContent =
+      msg.message?.conversation ||
+      msg.message?.extendedTextMessage?.text ||
+      msg.message?.videoMessage?.caption ||
+      '';
+
+    const imageCaption = msg.message?.imageMessage?.caption || '';
+    const imagePath = await this.saveInboundImage(chatJid, msg, groupFolder);
+    if (!imagePath) {
+      return textContent || imageCaption || '';
+    }
+
+    const parts = [`[Image attached: ${imagePath}]`];
+    if (imageCaption) parts.push(`Image caption: ${imageCaption}`);
+    if (textContent) parts.push(textContent);
+    return parts.join('\n');
+  }
+
+  private async saveInboundImage(
+    chatJid: string,
+    msg: WAMessage,
+    groupFolder: string,
+  ): Promise<string | null> {
+    if (!msg.message?.imageMessage) return null;
+
+    try {
+      const imageBuffer = await downloadMediaMessage(
+        msg,
+        'buffer',
+        {},
+        { logger, reuploadRequest: this.sock.updateMediaMessage },
+      );
+      const ext = this.imageExtensionFromMime(msg.message.imageMessage.mimetype ?? undefined);
+      const filename = `${msg.key.id || Date.now().toString()}${ext}`;
+      const uploadsDir = path.join(GROUPS_DIR, groupFolder, 'uploads');
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      fs.writeFileSync(path.join(uploadsDir, filename), imageBuffer);
+      const containerPath = `/workspace/group/uploads/${filename}`;
+      logger.info({ chatJid, containerPath }, 'Saved inbound WhatsApp image');
+      return containerPath;
+    } catch (err) {
+      logger.error({ chatJid, err }, 'Failed to save inbound WhatsApp image');
+      return null;
+    }
+  }
+
+  private imageExtensionFromMime(mimetype?: string): string {
+    switch (mimetype) {
+      case 'image/png':
+        return '.png';
+      case 'image/webp':
+        return '.webp';
+      case 'image/gif':
+        return '.gif';
+      case 'image/jpeg':
+      default:
+        return '.jpg';
+    }
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {

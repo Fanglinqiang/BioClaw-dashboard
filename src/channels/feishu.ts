@@ -157,6 +157,10 @@ function downloadMessageResource(
 }
 
 export interface FeishuChannelOpts {
+  /** Required when passing opts as the first argument (upstream constructor style) */
+  appId?: string;
+  /** Required when passing opts as the first argument (upstream constructor style) */
+  appSecret?: string;
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
@@ -167,6 +171,15 @@ export interface FeishuChannelOpts {
   defaultAgentType?: 'claude' | 'minimax' | 'qwen';
   /** Called when a new group is auto-registered */
   onRegisterGroup?: (jid: string, group: RegisteredGroup) => void;
+  // Webhook / websocket connection mode options
+  connectionMode?: 'websocket' | 'webhook';
+  verificationToken?: string;
+  encryptKey?: string;
+  host?: string;
+  port?: number;
+  path?: string;
+  // channelCallbacks autoRegister compatibility
+  autoRegister?: (jid: string, name: string, channelName: string) => void;
 }
 
 export class FeishuChannel implements Channel {
@@ -186,7 +199,24 @@ export class FeishuChannel implements Channel {
   // dedup: track processed message IDs to avoid double-processing
   private processedMsgIds = new Set<string>();
 
-  constructor(appId: string, appSecret: string, opts: FeishuChannelOpts) {
+  constructor(optsOrAppId: FeishuChannelOpts | string, appSecretOrUndef?: string, extraOpts?: FeishuChannelOpts) {
+    // Support both constructor signatures:
+    //   new FeishuChannel({ appId, appSecret, ...opts })  (upstream style)
+    //   new FeishuChannel(appId, appSecret, opts)         (HEAD style)
+    let appId: string;
+    let appSecret: string;
+    let opts: FeishuChannelOpts;
+
+    if (typeof optsOrAppId === 'string') {
+      appId = optsOrAppId;
+      appSecret = appSecretOrUndef!;
+      opts = extraOpts!;
+    } else {
+      appId = optsOrAppId.appId as unknown as string;
+      appSecret = optsOrAppId.appSecret as unknown as string;
+      opts = optsOrAppId;
+    }
+
     this.appId = appId;
     this.appSecret = appSecret;
     this.opts = opts;
@@ -366,6 +396,17 @@ export class FeishuChannel implements Channel {
         };
         this.opts.onRegisterGroup(jid, autoGroup);
         logger.info({ jid, folder: this.opts.defaultFolder, chatType }, 'Feishu: auto-registered new chat');
+      }
+    }
+
+    // autoRegister callback (channelCallbacks pattern from upstream)
+    if (this.opts.autoRegister) {
+      const known = this.opts.registeredGroups();
+      if (!known[jid]) {
+        const chatName = message.chat_type === 'p2p'
+          ? `Feishu DM ${senderId}`
+          : `Feishu Group ${message.chat_id.slice(-8)}`;
+        this.opts.autoRegister(jid, chatName, 'feishu');
       }
     }
 

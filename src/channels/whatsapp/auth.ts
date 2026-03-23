@@ -19,7 +19,7 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { getWhatsAppBrowser } from './platform.js';
+import { getWhatsAppBrowser } from '../../platform.js';
 
 const AUTH_DIR = './store/auth';
 const QR_FILE = './store/qr-data.txt';

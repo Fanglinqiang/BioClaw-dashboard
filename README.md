@@ -33,6 +33,7 @@ Welcome to join our WeChat group to discuss and exchange ideas! Scan the QR code
 
 - [Overview](#overview)
 - [Quick Start](#quick-start)
+- [Messaging channels](#messaging-channels)
 - [Demo Examples](#demo-examples)
 - [System Architecture](#system-architecture)
 - [Included Tools](#included-tools)
@@ -59,22 +60,47 @@ Results — including images, plots, and structured reports — are delivered di
 
 ### Prerequisites
 
-- macOS or Linux
+- **macOS / Linux / Windows** (Windows requires PowerShell 5.1+)
 - Node.js 20+
 - Docker Desktop
 - Anthropic API key or OpenRouter API key
 
 ### Installation
 
+**One-command setup** (recommended for first-time users):
+
+<details>
+<summary><b>macOS / Linux</b></summary>
+
 ```bash
-# Clone the repository
 git clone https://github.com/Runchuan-BU/BioClaw.git
 cd BioClaw
+bash scripts/setup.sh
+```
 
-# Install dependencies
+</details>
+
+<details>
+<summary><b>Windows (PowerShell)</b></summary>
+
+```powershell
+git clone https://github.com/Runchuan-BU/BioClaw.git
+cd BioClaw
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+</details>
+
+The setup script will check prerequisites, install dependencies, build the Docker image, and walk you through API key configuration interactively.
+
+**Manual setup:**
+
+```bash
+git clone https://github.com/Runchuan-BU/BioClaw.git
+cd BioClaw
 npm install
-
-# Start BioClaw
+cp .env.example .env        # Edit with your API keys (see model section below)
+docker build --no-cache -t bioclaw-agent:latest container/ # uncomment Dockerfile image source if you meet 100 errors.
 npm start
 ```
 
@@ -131,94 +157,11 @@ In any connected chat, simply message:
 @Bioclaw <your request>
 ```
 
-## Channel Setup
+## Messaging channels
 
-BioClaw supports multiple messaging platforms. Enable one or more by setting the corresponding environment variables in `.env`.
+Supported platforms include **WhatsApp** (default), **Feishu (Lark)**, **WeCom**, **Discord**, **Slack** (Socket Mode), **WeChat Personal** (experimental), and optional **local web** (browser) chat. Full setup steps, env vars, and disabling channels are in **[docs/CHANNELS.md](docs/CHANNELS.md)** (简体中文：[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)).
 
-### WhatsApp (Default)
-
-No credentials needed. On first run, a QR code is printed to the terminal — scan it with your WhatsApp app. Auth state is persisted in `store/auth/`.
-
-### WeCom (Enterprise WeChat)
-
-1. Log in to the [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/frame)
-2. Go to **Apps & Mini Programs** > **Smart Robots** > **Create**
-3. Select **API mode** with **Long Connection** (not Callback URL)
-4. Copy the **Bot ID** and **Secret**
-5. Add to `.env`:
-   ```
-   WECOM_BOT_ID=your-bot-id
-   WECOM_SECRET=your-secret
-   ```
-6. Add the bot to a group in WeCom, then `@` it to start chatting
-
-**Image sending (optional):** To send images in WeCom, create a self-built app in the admin console and configure:
-```
-WECOM_CORP_ID=your-corp-id
-WECOM_AGENT_ID=your-agent-id
-WECOM_CORP_SECRET=your-corp-secret
-```
-The server IP must be added to the app's trusted IP whitelist.
-
-### Feishu / Lark (飞书)
-
-1. Go to the [Feishu Open Platform](https://open.feishu.cn/) and create a **self-built app** (企业自建应用)
-2. Enable **Bot** capability under **Add Capabilities**
-3. Under **Permissions & Scopes**, grant:
-   - `im:message` — Receive messages
-   - `im:message:send_as_bot` — Send messages as bot
-   - `im:resource` — Download images/files from messages
-   - `im:message.group_msg` — Receive group messages (if using in groups)
-4. Under **Events & Callbacks**, select **Long Connection** (长连接) mode
-5. Subscribe to event: `im.message.receive_v1`
-6. Copy the **App ID** and **App Secret**, add to `.env`:
-   ```
-   FEISHU_APP_ID=cli_your_app_id
-   FEISHU_APP_SECRET=your_app_secret
-   ```
-7. Publish the app version and have the admin approve it
-8. Add the bot to a group or send it a direct message to start chatting
-
-**Auto-registration:** New chats are automatically registered — no manual setup needed. By default, they use the `main` group folder. Override with:
-```
-FEISHU_DEFAULT_FOLDER=my-folder
-```
-
-**Multi-bot support:** Up to 3 Feishu bots can run simultaneously (e.g., different agents for different groups):
-```
-FEISHU2_APP_ID=cli_second_app_id
-FEISHU2_APP_SECRET=second_app_secret
-FEISHU2_DEFAULT_FOLDER=literature
-
-FEISHU3_APP_ID=cli_third_app_id
-FEISHU3_APP_SECRET=third_app_secret
-FEISHU3_DEFAULT_FOLDER=qwen-agent
-```
-
-<p align="center">
-  <img src="docs/images/lark/lark-deepseek-1.jpg" width="45%" alt="Feishu Chat Example 1"/>
-  <img src="docs/images/lark/lark-deepseek-2.jpg" width="45%" alt="Feishu Chat Example 2"/>
-</p>
-
-### Discord
-
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
-2. Click **New Application**, then go to **Bot** > **Add Bot**
-3. Enable **MESSAGE CONTENT INTENT** under Privileged Gateway Intents
-4. Copy the **Bot Token** and add to `.env`:
-   ```
-   DISCORD_BOT_TOKEN=your-bot-token
-   ```
-5. Go to **OAuth2** > **URL Generator**, select scope `bot`, grant permissions: Send Messages, Attach Files, Read Message History
-6. Open the generated URL to invite the bot to your Discord server
-7. Send a message in any channel — the bot auto-registers and responds
-
-### Disabling a Channel
-
-To run without WhatsApp (e.g., WeCom/Discord only):
-```
-DISABLE_WHATSAPP=1
-```
+**Lab trace** (SSE timeline, workspace tree) is built into the local web UI — no extra config needed. See **[docs/DASHBOARD.md](docs/DASHBOARD.md)**.
 
 ## Second Quick Start
 
@@ -377,59 +320,40 @@ The bioinformatics tool suite and domain-specific skills — including sequence 
 | **scanpy** | Single-cell RNA-seq analysis |
 | **pysam** | SAM/BAM file access from Python |
 
-## Quick Start
+## Scripts
 
-### Prerequisites
+All utility scripts are in the `scripts/` directory:
 
-- macOS or Linux
-- Node.js 20+
-- Docker Desktop
-- Anthropic API key
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/Runchuan-BU/BioClaw.git
-cd BioClaw
-
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Anthropic API key
-
-# Build the agent Docker image
-docker build -t bioclaw-agent:latest container/
-
-# Start BioClaw (scan the QR code with WhatsApp on first run)
-npm start
-```
-
-### Usage
-
-In any WhatsApp group where BioClaw is connected, simply message:
-
-```
-@Bioclaw <your request>
-```
-
-See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use demo prompts with expected outputs.
+| Command | Script | Description |
+|---------|--------|-------------|
+| `bash scripts/setup.sh` | `scripts/setup.sh` | One-command setup for macOS/Linux |
+| `powershell scripts\setup.ps1` | `scripts/setup.ps1` | One-command setup for Windows |
+| `npm run web` | `scripts/start-web.mjs` | Start BioClaw with local web UI (chat + lab trace) |
+| `npm run open:web` | `scripts/open-local-web.mjs` | Open the web UI in default browser |
+| `npm run stop:web` | `scripts/stop-bioclaw-web.mjs` | Stop the web server process |
+| `bash scripts/clear-local-web.sh` | `scripts/clear-local-web.sh` | Clear all local-web chat history and trace events |
+| `npx tsx scripts/test-cli.ts "prompt"` | `scripts/test-cli.ts` | Run a single prompt through the container agent (CLI test) |
+| `npx tsx scripts/manage-groups.ts list` | `scripts/manage-groups.ts` | Manage WhatsApp group registrations (list / register / remove) |
+| `python3 scripts/demo.py` | `scripts/demo.py` | TP53 gene analysis demo (runs inside container) |
 
 ## Project Structure
 
 ```
 BioClaw/
-├── bioclaw_logo.jpg           # Project logo
-├── ExampleTask/
-│   ├── ExampleTask.md         # 6 demo prompts with descriptions
-│   ├── 1.jpg                  # Workspace triage demo
-│   ├── 2.jpg                  # PubMed search demo
-│   ├── 3.jpg                  # Protein structure demo
-│   ├── 4.jpg                  # BLAST search demo
-│   ├── 5.jpg                  # FastQC QC demo
-│   └── 6.jpg                  # Volcano plot demo
+├── src/                       # Node orchestrator
+│   └── channels/              # WhatsApp, WeCom, Feishu, Discord, Slack, WeChat, local web
+├── container/                 # Agent Dockerfile + skills
+├── scripts/                   # Utility scripts (setup, web, testing)
+├── groups/                    # Per-group workspace & CLAUDE.md
+├── docs/
+│   ├── CHANNELS.md            # Messaging platform setup (EN)
+│   ├── CHANNELS.zh-CN.md      # Messaging platform setup (ZH)
+│   ├── DASHBOARD.md           # Lab trace & observability
+│   ├── SECURITY.md            # Trust model & container isolation
+│   ├── SPEC.md                # Technical specification
+│   ├── DEBUG_CHECKLIST.md     # Troubleshooting guide
+│   └── images/                # Doc screenshots
+├── ExampleTask/               # Demo prompts + screenshots
 └── README.md
 ```
 

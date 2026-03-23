@@ -10,8 +10,8 @@ export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP !== 'false';
 export const ENABLE_LOCAL_WEB = process.env.ENABLE_LOCAL_WEB === 'true';
-export const LOCAL_WEB_HOST = process.env.LOCAL_WEB_HOST || '127.0.0.1';
-export const LOCAL_WEB_PORT = parseInt(process.env.LOCAL_WEB_PORT || '3210', 10);
+export const LOCAL_WEB_HOST = process.env.LOCAL_WEB_HOST || 'localhost';
+export const LOCAL_WEB_PORT = parseInt(process.env.LOCAL_WEB_PORT || '3000', 10);
 export const LOCAL_WEB_GROUP_JID =
   process.env.LOCAL_WEB_GROUP_JID || 'local-web@local.web';
 export const LOCAL_WEB_GROUP_NAME =
@@ -19,6 +19,19 @@ export const LOCAL_WEB_GROUP_NAME =
 export const LOCAL_WEB_GROUP_FOLDER =
   process.env.LOCAL_WEB_GROUP_FOLDER || 'local-web';
 export const LOCAL_WEB_SECRET = process.env.LOCAL_WEB_SECRET || '';
+export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
+export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+export const FEISHU_CONNECTION_MODE =
+  (process.env.FEISHU_CONNECTION_MODE || 'websocket').toLowerCase();
+export const FEISHU_VERIFICATION_TOKEN = process.env.FEISHU_VERIFICATION_TOKEN || '';
+export const FEISHU_ENCRYPT_KEY = process.env.FEISHU_ENCRYPT_KEY || '';
+export const FEISHU_HOST = process.env.FEISHU_HOST || '0.0.0.0';
+export const FEISHU_PORT = parseInt(process.env.FEISHU_PORT || '8080', 10);
+export const FEISHU_PATH = process.env.FEISHU_PATH || '/feishu/events';
+export const ENABLE_WECHAT = process.env.ENABLE_WECHAT === 'true';
+
+/** If set, require Authorization: Bearer <token> or ?token= on trace API routes */
+export const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
 
 // Absolute paths needed for container mounts
 const PROJECT_ROOT = process.cwd();
@@ -94,9 +107,7 @@ export const WECOM_CORP_ID = process.env.WECOM_CORP_ID || "";
 export const WECOM_CORP_SECRET = process.env.WECOM_CORP_SECRET || "";
 export const WECOM_AGENT_ID = parseInt(process.env.WECOM_AGENT_ID || "0", 10);
 
-// Feishu / Lark (optional — set via env or .env file)
-export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
-export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
+// Feishu / Lark multi-instance (optional — set via env or .env file)
 export const FEISHU_DEFAULT_FOLDER = process.env.FEISHU_DEFAULT_FOLDER || 'main';
 export const FEISHU2_APP_ID = process.env.FEISHU2_APP_ID || '';
 export const FEISHU2_APP_SECRET = process.env.FEISHU2_APP_SECRET || '';

@@ -3,6 +3,11 @@
 
 FROM node:22-slim
 
+# if you get an error: "returned a non-zero code: 100"
+# RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources \
+    # || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+
 # Install system dependencies for Chromium + bio tools
 RUN apt-get update && apt-get install -y \
     # --- Browser automation ---

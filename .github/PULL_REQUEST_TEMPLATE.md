@@ -1,6 +1,7 @@
 ## Type of Change
 
-- [ ] **Skill** - adds a new skill in `.claude/skills/`
+- [ ] **Skill (dev)** - adds a meta skill in `.claude/skills/` (instructions for Claude Code)
+- [ ] **Skill (runtime)** - adds/updates `container/skills/` for the chat agent
 - [ ] **Fix** - bug fix or security fix to source code
 - [ ] **Simplification** - reduces or simplifies source code
 

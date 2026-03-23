@@ -8,18 +8,54 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 
 ## Key Files
 
+### Core
 | File | Purpose |
 |------|---------|
-| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/channels/whatsapp.ts` | WhatsApp connection, auth, send/receive |
-| `src/ipc.ts` | IPC watcher and task processing |
-| `src/router.ts` | Message formatting and outbound routing |
+| `src/index.ts` | Orchestrator: channel setup, agent invocation, main() |
+| `src/message-loop.ts` | Message polling loop and recovery |
+| `src/session-manager.ts` | State management (sessions, groups, timestamps) |
 | `src/config.ts` | Trigger pattern, paths, intervals |
-| `src/container-runner.ts` | Spawns agent containers with mounts |
-| `src/task-scheduler.ts` | Runs scheduled tasks |
-| `src/db.ts` | SQLite operations |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
+| `src/router.ts` | Message formatting and outbound routing |
+| `src/group-folder.ts` | Group directory management, IPC dirs, snapshots |
+| `src/group-queue.ts` | Per-group job queue with container lifecycle |
+
+### Channels (`src/channels/`)
+| File | Purpose |
+|------|---------|
+| `channels/registry.ts` | Channel factory pattern and lifecycle |
+| `channels/whatsapp/channel.ts` | WhatsApp connection, auth, send/receive |
+| `channels/whatsapp/auth.ts` | WhatsApp QR code auth flow |
+| `channels/local-web/channel.ts` | Local web chat interface |
+| `channels/local-web/html-template.ts` | Web UI HTML generation |
+| `channels/local-web/vendor-scripts.ts` | Bundled JS libraries for web UI |
+
+### Container
+| File | Purpose |
+|------|---------|
+| `src/container-runner.ts` | Container lifecycle, output parsing, timeouts |
+| `src/container-runtime.ts` | Low-level container operations (args, spawn) |
+| `src/credential-proxy.ts` | Secret management (stdin injection, never on disk) |
 | `container/Dockerfile` | Agent container with bio tools |
+
+### Database (`src/db/`)
+| File | Purpose |
+|------|---------|
+| `db/connection.ts` | SQLite initialization and schema |
+| `db/messages.ts` | Chat metadata and message CRUD |
+| `db/groups.ts` | Registered group CRUD |
+| `db/tasks.ts` | Scheduled task CRUD |
+| `db/sessions.ts` | Session CRUD |
+| `db/state.ts` | Router state key-value store |
+| `db/traces.ts` | Agent trace events |
+| `db/migration.ts` | JSON file → SQLite migration |
+| `db/index.ts` | Barrel re-exports |
+
+### Other
+| File | Purpose |
+|------|---------|
+| `src/ipc.ts` | IPC watcher and task processing |
+| `src/task-scheduler.ts` | Runs scheduled tasks |
+| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 
 ## Biology Tools Available in Container
 

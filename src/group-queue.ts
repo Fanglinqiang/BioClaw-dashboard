@@ -1,4 +1,4 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -281,22 +281,40 @@ export class GroupQueue {
     }
   }
 
-  async shutdown(_gracePeriodMs: number): Promise<void> {
+  async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
-    // Count active containers but don't kill them — they'll finish on their own
-    // via idle timeout or container timeout. The --rm flag cleans them up on exit.
-    // This prevents WhatsApp reconnection restarts from killing working agents.
     const activeContainers: string[] = [];
-    for (const [jid, state] of this.groups) {
+    for (const [, state] of this.groups) {
       if (state.process && !state.process.killed && state.containerName) {
         activeContainers.push(state.containerName);
       }
     }
 
+    if (activeContainers.length === 0) {
+      logger.info('GroupQueue shutting down (no active containers)');
+      return;
+    }
+
     logger.info(
-      { activeCount: this.activeCount, detachedContainers: activeContainers },
-      'GroupQueue shutting down (containers detached, not killed)',
+      { activeCount: this.activeCount, containers: activeContainers },
+      'GroupQueue shutting down, stopping containers...',
     );
+
+    // Stop all active containers in parallel
+    const stopPromises = activeContainers.map((name) =>
+      new Promise<void>((resolve) => {
+        try {
+          execSync(`docker stop ${name}`, { timeout: gracePeriodMs, stdio: 'ignore' });
+          logger.info({ container: name }, 'Container stopped');
+        } catch {
+          logger.warn({ container: name }, 'Container stop failed or timed out');
+        }
+        resolve();
+      }),
+    );
+
+    await Promise.all(stopPromises);
+    logger.info('All containers stopped');
   }
 }
