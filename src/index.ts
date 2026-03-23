@@ -43,6 +43,7 @@ import { WeComChannel } from './channels/wecom.js';
 import { FeishuChannel } from './channels/feishu.js';
 import { DiscordChannel } from './channels/discord.js';
 import {
+  ContainerEvent,
   ContainerOutput,
   runContainerAgent,
   writeGroupsSnapshot,
@@ -106,6 +107,15 @@ async function sendImageToChannel(jid: string, imagePath: string, caption?: stri
     return;
   }
   await ch.sendImage(jid, imagePath, caption);
+}
+
+async function sendFileToChannel(jid: string, filePath: string): Promise<void> {
+  const ch = channelForJid(jid);
+  if (!ch?.sendFile) {
+    logger.warn({ jid }, 'No channel with file support for this JID');
+    return;
+  }
+  await ch.sendFile(jid, filePath);
 }
 
 function loadState(): void {
@@ -239,16 +249,61 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Streaming card state (for channels that support CardKit, e.g. Feishu)
+  let streamCardId: string | null = null;
+  let streamSequence = 0;
+  let accumulatedText = '';
+  let cardCreatePending = false;
+
+  const supportsStreaming = !!(channel?.createStreamingCard);
+
+  // onEvent callback: create/update streaming card as text events arrive
+  const onStreamEvent = supportsStreaming ? (event: ContainerEvent) => {
+    if (event.type === 'text' && event.text) {
+      accumulatedText += (accumulatedText ? '\n\n' : '') + event.text;
+      streamSequence++;
+      const seq = streamSequence;
+
+      if (!streamCardId && !cardCreatePending) {
+        // First text event — create the streaming card
+        cardCreatePending = true;
+        channel!.createStreamingCard!(chatJid).then(cardId => {
+          cardCreatePending = false;
+          if (cardId) {
+            streamCardId = cardId;
+            channel!.updateStreamingCard!(cardId, accumulatedText, seq);
+            outputSentToUser = true;
+          }
+        }).catch(err => {
+          cardCreatePending = false;
+          logger.error({ err }, 'Failed to create streaming card');
+        });
+      } else if (streamCardId) {
+        channel!.updateStreamingCard!(streamCardId, accumulatedText, seq).catch(() => {});
+      }
+    }
+  } : undefined;
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
+
       if (text && channel) {
-        const formatted = formatOutbound(channel, text);
-        if (formatted) {
-          await channel.sendMessage(chatJid, formatted);
+        if (streamCardId) {
+          // Finalize the streaming card with the final text
+          streamSequence++;
+          const formatted = formatOutbound(channel, text);
+          await channel.finalizeStreamingCard!(streamCardId, formatted || text, streamSequence);
           outputSentToUser = true;
+        } else {
+          // No streaming card — send as normal message
+          const formatted = formatOutbound(channel, text);
+          if (formatted) {
+            await channel.sendMessage(chatJid, formatted);
+            outputSentToUser = true;
+          }
         }
       }
       resetIdleTimer();
@@ -257,7 +312,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.status === 'error') {
       hadError = true;
     }
-  });
+  }, onStreamEvent);
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -284,6 +339,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  onEvent?: (event: ContainerEvent) => void,
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
@@ -348,9 +404,11 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
+        agentType: group.agentType,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
       wrappedOnOutput,
+      onEvent,
     );
 
     if (output.newSessionId) {
@@ -686,6 +744,7 @@ async function main(): Promise<void> {
       return ch.sendMessage(jid, text);
     },
     sendImage: (jid, imagePath, caption) => sendImageToChannel(jid, imagePath, caption),
+    sendFile: (jid, filePath) => sendFileToChannel(jid, filePath),
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),

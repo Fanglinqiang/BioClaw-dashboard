@@ -6,6 +6,7 @@ import { CronExpressionParser } from 'cron-parser';
 import {
   ASSISTANT_NAME,
   DATA_DIR,
+  GROUPS_DIR,
   IPC_POLL_INTERVAL,
   MAIN_GROUP_FOLDER,
   TIMEZONE,
@@ -18,6 +19,7 @@ import { RegisteredGroup } from './types.js';
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   sendImage: (jid: string, imagePath: string, caption?: string) => Promise<void>;
+  sendFile: (jid: string, filePath: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
@@ -108,14 +110,23 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     isMain ||
                     (targetGroup && targetGroup.folder === sourceGroup)
                   ) {
-                    const hostImagePath = path.join(ipcBaseDir, sourceGroup, data.filePath);
+                    let hostImagePath = path.join(ipcBaseDir, sourceGroup, data.filePath);
+                    if (!fs.existsSync(hostImagePath)) {
+                      const normalized = data.filePath.replace(/^\//, '');
+                      if (normalized.startsWith('workspace/group/')) {
+                        const relPath = normalized.slice('workspace/group/'.length);
+                        hostImagePath = path.join(GROUPS_DIR, sourceGroup, relPath);
+                      }
+                    }
                     if (fs.existsSync(hostImagePath)) {
                       await deps.sendImage(data.chatJid, hostImagePath, data.caption);
                       logger.info(
                         { chatJid: data.chatJid, sourceGroup, filePath: data.filePath },
                         'IPC image sent',
                       );
-                      try { fs.unlinkSync(hostImagePath); } catch {}
+                      if (hostImagePath.startsWith(ipcBaseDir)) {
+                        try { fs.unlinkSync(hostImagePath); } catch {}
+                      }
                     } else {
                       logger.warn(
                         { hostImagePath, sourceGroup },
@@ -126,6 +137,50 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     logger.warn(
                       { chatJid: data.chatJid, sourceGroup },
                       'Unauthorized IPC image attempt blocked',
+                    );
+                  }
+                }
+              } else if (data.type === 'file' && data.chatJid && data.filePath) {
+                if (data.chatJid === 'dashboard') {
+                  logger.debug({ sourceGroup }, 'IPC file from dashboard chat (skipped)');
+                } else {
+                  const targetGroup = registeredGroups[data.chatJid];
+                  if (
+                    isMain ||
+                    (targetGroup && targetGroup.folder === sourceGroup)
+                  ) {
+                    // Try IPC files dir first, then fall back to group dir
+                    // (agent may use send_file tool → files/xxx, or write IPC JSON with container path like workspace/group/xxx)
+                    let resolvedPath = path.join(ipcBaseDir, sourceGroup, data.filePath);
+                    if (!fs.existsSync(resolvedPath)) {
+                      // Map container path /workspace/group/xxx to host groups dir
+                      const normalized = data.filePath.replace(/^\//, '');
+                      if (normalized.startsWith('workspace/group/')) {
+                        const relPath = normalized.slice('workspace/group/'.length);
+                        resolvedPath = path.join(GROUPS_DIR, sourceGroup, relPath);
+                      }
+                    }
+                    if (fs.existsSync(resolvedPath)) {
+                      await deps.sendFile(data.chatJid, resolvedPath);
+                      const origName = data.originalName || path.basename(resolvedPath);
+                      logger.info(
+                        { chatJid: data.chatJid, sourceGroup, filePath: data.filePath, originalName: origName },
+                        'IPC file sent',
+                      );
+                      // Only delete if it was in the IPC temp dir, not the group working dir
+                      if (resolvedPath.startsWith(ipcBaseDir)) {
+                        try { fs.unlinkSync(resolvedPath); } catch {}
+                      }
+                    } else {
+                      logger.warn(
+                        { resolvedPath, sourceGroup, originalFilePath: data.filePath },
+                        'IPC file not found',
+                      );
+                    }
+                  } else {
+                    logger.warn(
+                      { chatJid: data.chatJid, sourceGroup },
+                      'Unauthorized IPC file attempt blocked',
                     );
                   }
                 }

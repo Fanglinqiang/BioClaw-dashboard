@@ -33,6 +33,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  agentType?: 'claude' | 'minimax' | 'qwen';
   secrets?: Record<string, string>;
 }
 

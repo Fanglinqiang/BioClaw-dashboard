@@ -88,7 +88,18 @@ export interface Channel {
   disconnect(): Promise<void>;
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   sendImage?(jid: string, imagePath: string, caption?: string): Promise<void>;
+  sendFile?(jid: string, filePath: string): Promise<void>;
   prefixAssistantName?: boolean;
+  // Streaming card support (Feishu CardKit)
+  createStreamingCard?(jid: string): Promise<string | null>;
+  updateStreamingCard?(cardId: string, text: string, sequence: number, toolCalls?: StreamingToolCall[]): Promise<void>;
+  finalizeStreamingCard?(cardId: string, text: string, sequence: number, toolCalls?: StreamingToolCall[], elapsedMs?: number): Promise<void>;
+}
+
+export interface StreamingToolCall {
+  id: string;
+  tool: string;
+  status: 'running' | 'complete' | 'error';
 }
 
 // Callback type that channels use to deliver inbound messages

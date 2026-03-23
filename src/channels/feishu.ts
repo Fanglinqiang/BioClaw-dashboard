@@ -10,6 +10,7 @@ import {
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
+  StreamingToolCall,
 } from '../types.js';
 
 // Feishu post message max content size (30 KB but we stay conservative)
@@ -512,5 +513,192 @@ export class FeishuChannel implements Channel {
 
   async setTyping(_jid: string, _isTyping: boolean): Promise<void> {
     // Feishu doesn't support typing indicators via bot API
+  }
+
+  // --- Streaming card helpers ---
+
+  /** Build tool status lines for card display */
+  private _buildToolStatusText(toolCalls?: StreamingToolCall[]): string {
+    if (!toolCalls?.length) return '';
+    const lines = toolCalls.map(t => {
+      const icon = t.status === 'running' ? '🔄' : t.status === 'complete' ? '✅' : '❌';
+      // Show friendly tool name (strip mcp__bioclaw__ prefix)
+      const name = t.tool.replace(/^mcp__bioclaw__/, '').replace(/_/g, ' ');
+      return `${icon} ${name}`;
+    });
+    return '\n\n---\n' + lines.join('\n');
+  }
+
+  /** Build card elements array with text + optional tool status */
+  private _buildCardElements(text: string, toolCalls?: StreamingToolCall[], elapsedMs?: number): any[] {
+    const elements: any[] = [
+      {
+        tag: 'markdown',
+        content: text,
+        element_id: 'streaming_content',
+        text_size: 'normal',
+      },
+    ];
+
+    // Tool status section
+    if (toolCalls?.length) {
+      const toolText = toolCalls.map(t => {
+        const icon = t.status === 'running' ? '🔄' : t.status === 'complete' ? '✅' : '❌';
+        const name = t.tool.replace(/^mcp__bioclaw__/, '').replace(/_/g, ' ');
+        return `${icon} ${name}`;
+      }).join('\n');
+      elements.push({
+        tag: 'markdown',
+        content: toolText,
+        element_id: 'tool_status',
+        text_size: 'notation',
+      });
+    }
+
+    // Elapsed time footer
+    if (elapsedMs !== undefined) {
+      const secs = (elapsedMs / 1000).toFixed(1);
+      elements.push({
+        tag: 'markdown',
+        content: `⏱ ${secs}s`,
+        element_id: 'footer',
+        text_size: 'notation',
+      });
+    }
+
+    return elements;
+  }
+
+  // --- Streaming card support via CardKit 2.0 ---
+
+  async createStreamingCard(jid: string): Promise<string | null> {
+    const chatId = jid.slice(this.jidPrefix.length);
+
+    try {
+      // 1. Build Card JSON 2.0 with a streaming markdown element
+      const cardData = {
+        schema: '2.0',
+        body: {
+          elements: [
+            {
+              tag: 'markdown',
+              content: '思考中...',
+              element_id: 'streaming_content',
+              text_size: 'normal',
+            },
+          ],
+        },
+        header: {
+          title: { tag: 'plain_text', content: 'Bio' },
+          template: 'blue',
+        },
+        config: {
+          update_multi: true,
+        },
+      };
+
+      // 2. Create card entity
+      const createRes = await this.client.cardkit.v1.card.create({
+        data: {
+          type: 'card_json',
+          data: JSON.stringify(cardData),
+        },
+      }) as any;
+
+      const cardId: string | undefined = createRes?.data?.card_id;
+      if (!cardId) {
+        logger.error({ code: createRes?.code, msg: createRes?.msg, data: createRes?.data }, 'Feishu CardKit create failed — no card_id');
+        return null;
+      }
+
+      // 3. Enable streaming mode
+      await this.client.cardkit.v1.card.settings({
+        path: { card_id: cardId },
+        data: {
+          settings: JSON.stringify({ streaming_mode: true }),
+          sequence: 1,
+        },
+      });
+
+      // 4. Send card message to chat
+      await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify({ type: 'card', data: { card_id: cardId } }),
+        },
+      });
+
+      logger.info({ chatId, cardId }, 'Feishu streaming card created');
+      return cardId;
+    } catch (err) {
+      logger.error({ err, chatId }, 'Feishu createStreamingCard error');
+      return null;
+    }
+  }
+
+  async updateStreamingCard(cardId: string, text: string, sequence: number): Promise<void> {
+    try {
+      await this.client.cardkit.v1.cardElement.content({
+        path: { card_id: cardId, element_id: 'streaming_content' },
+        data: {
+          content: text,
+          sequence,
+        },
+      });
+    } catch (err) {
+      logger.error({ err, cardId, sequence }, 'Feishu updateStreamingCard error');
+    }
+  }
+
+  async finalizeStreamingCard(cardId: string, text: string, sequence: number): Promise<void> {
+    try {
+      // 1. Final card update with complete content
+      const finalCard = {
+        schema: '2.0',
+        body: {
+          elements: [
+            {
+              tag: 'markdown',
+              content: text,
+              element_id: 'streaming_content',
+              text_size: 'normal',
+            },
+          ],
+        },
+        header: {
+          title: { tag: 'plain_text', content: 'Bio' },
+          template: 'blue',
+        },
+        config: {
+          update_multi: true,
+        },
+      };
+
+      await this.client.cardkit.v1.card.update({
+        path: { card_id: cardId },
+        data: {
+          card: {
+            type: 'card_json',
+            data: JSON.stringify(finalCard),
+          },
+          sequence,
+        },
+      });
+
+      // 2. Disable streaming mode
+      await this.client.cardkit.v1.card.settings({
+        path: { card_id: cardId },
+        data: {
+          settings: JSON.stringify({ streaming_mode: false }),
+          sequence: sequence + 1,
+        },
+      });
+
+      logger.info({ cardId }, 'Feishu streaming card finalized');
+    } catch (err) {
+      logger.error({ err, cardId }, 'Feishu finalizeStreamingCard error');
+    }
   }
 }

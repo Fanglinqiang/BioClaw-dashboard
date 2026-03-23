@@ -29,6 +29,7 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  agentType?: 'claude' | 'minimax' | 'qwen';
   secrets?: Record<string, string>;
 }
 
@@ -240,6 +241,25 @@ function queueIpcImage(chatJid: string, groupFolder: string, filePath: string, c
   return filename;
 }
 
+function queueIpcFile(chatJid: string, groupFolder: string, filePath: string): string {
+  const ext = path.extname(filePath) || '';
+  fs.mkdirSync(IPC_FILES_DIR, { recursive: true });
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+  const destPath = path.join(IPC_FILES_DIR, filename);
+  fs.copyFileSync(filePath, destPath);
+
+  writeIpcFile(IPC_MESSAGES_DIR, {
+    type: 'file',
+    chatJid,
+    filePath: `files/${filename}`,
+    originalName: path.basename(filePath),
+    groupFolder,
+    timestamp: new Date().toISOString(),
+  });
+
+  return filename;
+}
+
 function queueScheduledTask(
   containerInput: ContainerInput,
   args: { prompt: string; schedule_type: string; schedule_value: string; context_mode?: string; target_group_jid?: string },
@@ -256,7 +276,25 @@ function queueScheduledTask(
   });
 }
 
-function resolveProviderConfig(env: Record<string, string | undefined>): ProviderConfig {
+function resolveProviderConfig(env: Record<string, string | undefined>, agentType?: string): ProviderConfig {
+  // Agent-type-specific providers take priority
+  if (agentType === 'minimax' && env.MINIMAX_API_KEY) {
+    return {
+      provider: 'openai-compatible',
+      apiKey: env.MINIMAX_API_KEY,
+      baseUrl: env.MINIMAX_BASE_URL || 'https://api.minimax.chat/v1',
+      model: env.MINIMAX_MODEL || 'MiniMax-M2.5',
+    };
+  }
+  if (agentType === 'qwen' && env.QWEN_AUTH_TOKEN && env.QWEN_API_BASE) {
+    return {
+      provider: 'openai-compatible',
+      apiKey: env.QWEN_AUTH_TOKEN,
+      baseUrl: env.QWEN_API_BASE,
+      model: env.QWEN_MODEL || 'qwen-plus',
+    };
+  }
+
   const requestedProvider = (env.MODEL_PROVIDER || '').trim().toLowerCase();
   const openRouterKey = env.OPENROUTER_API_KEY;
   const openCompatibleKey = env.OPENAI_COMPATIBLE_API_KEY;
@@ -293,6 +331,7 @@ function getBioSystemPrompt(): string {
     'Use tools to produce real results. Prefer the Bash tool for running shell commands, Python scripts, and bioinformatics workflows.',
     'Save output files to /workspace/group/ so users can access them.',
     'When you generate an image file (such as PNG, JPG, or GIF), call the send_image tool so the user receives it in chat instead of only seeing a saved file path.',
+    'When you generate non-image files (PDF, CSV, MD, DOCX, XLSX, etc.) that users need, call the send_file tool to deliver them in chat.',
     "If you generate plots with Chinese labels via matplotlib, configure a Chinese-capable font first (try: 'Noto Sans CJK SC' or 'WenQuanYi Zen Hei') and set axes.unicode_minus=False to avoid missing glyphs and minus-sign issues.",
     'Prioritize figures that look scientific, readable on a phone screen, and suitable for demos or slide decks.',
     'Avoid overcrowded labels, tiny fonts, excessive legends, rainbow color noise, and default low-quality plotting styles.',
@@ -635,6 +674,7 @@ async function runQuery(
   // BioClaw: inject biology-specific system context
   const bioSystemPrompt = getBioSystemPrompt()
     .replace('send_image tool', 'mcp__bioclaw__send_image')
+    .replace('send_file tool', 'mcp__bioclaw__send_file')
     .replace('Use tools to produce real results. Prefer the Bash tool for running shell commands, Python scripts, and bioinformatics workflows.', 'Write and execute Python scripts or bash commands to produce real results.');
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
@@ -830,6 +870,21 @@ function getOpenAICompatibleTools() {
     {
       type: 'function',
       function: {
+        name: 'send_file',
+        description: 'Send any file (PDF, CSV, MD, DOCX, etc.) from the container to the current chat.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string', description: 'Absolute file path inside the container.' },
+          },
+          required: ['file_path'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
         name: 'schedule_task',
         description: 'Schedule a recurring or one-time task for this chat.',
         parameters: {
@@ -901,6 +956,11 @@ async function executeOpenAIToolCall(
       if (!fs.existsSync(args.file_path)) return `File not found: ${args.file_path}`;
       queueIpcImage(containerInput.chatJid, containerInput.groupFolder, args.file_path, args.caption);
       return `Image queued for sending from ${args.file_path}`;
+    case 'send_file':
+      if (!args.file_path) return 'Missing required argument: file_path';
+      if (!fs.existsSync(args.file_path)) return `File not found: ${args.file_path}`;
+      queueIpcFile(containerInput.chatJid, containerInput.groupFolder, args.file_path);
+      return `File queued for sending: ${path.basename(args.file_path)}`;
     case 'schedule_task':
       if (!args.prompt || !args.schedule_type || !args.schedule_value) {
         return 'Missing one of required arguments: prompt, schedule_type, schedule_value';
@@ -1044,8 +1104,8 @@ async function main(): Promise<void> {
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
   }
-  const providerConfig = resolveProviderConfig(sdkEnv);
-  log(`Using provider: ${providerConfig.provider}${providerConfig.model ? ` (${providerConfig.model})` : ''}`);
+  const providerConfig = resolveProviderConfig(sdkEnv, containerInput.agentType);
+  log(`Using provider: ${providerConfig.provider}${providerConfig.model ? ` (${providerConfig.model})` : ''} (agentType: ${containerInput.agentType || 'claude'})`);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');

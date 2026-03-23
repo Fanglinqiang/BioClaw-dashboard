@@ -505,6 +505,7 @@ async function handleApi(
           groupFolder: group.folder,
           chatJid: 'dashboard',
           isMain: false,
+          agentType,
         },
         () => { /* noop — no GroupQueue tracking needed for dashboard */ },
         async (output) => {
@@ -516,7 +517,7 @@ async function handleApi(
           if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
             logTokenUsage({
               group_folder: group.folder,
-              agent_type: 'claude',
+              agent_type: agentType,
               input_tokens: output.usage.input_tokens,
               output_tokens: output.usage.output_tokens,
               cache_read_tokens: output.usage.cache_read_tokens,
