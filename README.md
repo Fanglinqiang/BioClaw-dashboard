@@ -52,6 +52,7 @@ The rapid growth of biomedical data, tools, and literature has created a fragmen
 - **Structural Biology** — Fetch and render 3D protein structures from PDB with PyMOL
 - **Data Visualization** — Create volcano plots, heatmaps, and expression figures from CSV data
 - **Literature Search** — Query PubMed for recent papers with structured summaries
+- **Image-based Wet-Lab Interpretation** — Analyze gel/blot photos captured from camera or uploaded in chat (e.g., SDS-PAGE lane quality and target-band checks)
 - **Workspace Management** — Triage files, recommend analysis steps, and manage shared group workspaces
 
 Results — including images, plots, and structured reports — are delivered directly back to the chat.
@@ -159,7 +160,44 @@ In any connected chat, simply message:
 
 ## Messaging channels
 
-Supported platforms include **WhatsApp** (default), **Feishu (Lark)**, **WeCom**, **Discord**, **Slack** (Socket Mode), **WeChat Personal** (experimental), and optional **local web** (browser) chat. Full setup steps, env vars, and disabling channels are in **[docs/CHANNELS.md](docs/CHANNELS.md)** (简体中文：[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)).
+Supported platforms include **WhatsApp** (default), **Feishu (Lark)**, **WeCom**, **Discord**, **Slack** (Socket Mode), **WeChat** (fully supported), **QQ** and optional **local web** (browser) chat. Full setup steps, env vars, and disabling channels are in **[docs/CHANNELS.md](docs/CHANNELS.md)** (简体中文：[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)).
+
+
+### WhatsApp Integration Example
+> BioClaw supports WhatsApp group workflows for conversational task requests and in-chat delivery of analysis results.
+
+<img src="ExampleTask/1.jpg" width="300" />
+
+### Feishu (Lark) Integration Example
+> BioClaw also supports Feishu/Lark conversations for interactive task requests and result delivery in chat.
+
+<img src="docs/images/feishu/feishu-bioclaw.jpg" width="300" />
+
+### WeCom Integration Example
+> BioClaw also supports WeCom conversations for team collaboration and in-chat analysis result delivery.
+
+<img src="docs/images/wecom/wecom-bioclaw.jpg" width="300" />
+
+### Discord Integration Example
+> BioClaw supports Discord channel workflows. Screenshot example will be added in a future update.
+
+### Slack (Socket Mode) Integration Example
+> BioClaw supports Slack (Socket Mode) workflows. Screenshot example will be added in a future update.
+
+### WeChat Integration Example
+> BioClaw supports one-click WeChat onboarding and in-chat file handoff workflows (send docs/images, then continue analysis in the same thread).
+
+<img src="docs/images/weixin/weixin-bioclaw.jpg" width="300" />
+
+### QQ Integration Example
+> BioClaw also supports QQ-based conversations for task requests and chat-native result delivery.
+
+<img src="docs/images/qq/qq-deepseek-1.jpg" width="300" />
+
+### Local Web UI (Dashboard) Example
+> The local web channel includes both chat and the built-in dashboard (Lab trace) for timeline observability.
+
+<img src="docs/images/dashboard/UI-bioclaw.jpg" width="1000" />
 
 **Lab trace** (SSE timeline, workspace tree) is built into the local web UI — no extra config needed. See **[docs/DASHBOARD.md](docs/DASHBOARD.md)**.
 
@@ -175,7 +213,7 @@ See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use de
 
 ## Demo Examples
 
-Below are live demonstrations of BioClaw handling real bioinformatics tasks via WhatsApp.
+Below are live demonstrations of BioClaw handling real bioinformatics tasks across mainstream channels (WhatsApp, QQ, WeCom, WeChat, Feishu/Lark, and local web UI).
 
 ### 1. Workspace Triage & Next Steps
 > Analyze files in a shared workspace and recommend the best next analysis steps.
@@ -242,6 +280,13 @@ Below are live demonstrations of BioClaw handling real bioinformatics tasks via 
 > Show residues within 5Å of ligand AQ4 in PDB 1M17.
 
 <img src="docs/images/pymol-binding-site.png" width="600" />
+
+---
+
+### 9. SDS-PAGE Gel Photo Review (WhatsApp Camera/Upload)
+> Capture or upload a gel image in WhatsApp, then ask BioClaw to assess lane quality and whether major bands match expected targets.
+
+<img src="docs/images/whatsapp-凝胶.jpg" width="420" />
 
 ---
 
