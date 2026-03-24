@@ -20,6 +20,9 @@ export const LOCAL_WEB_GROUP_NAME =
 export const LOCAL_WEB_GROUP_FOLDER =
   process.env.LOCAL_WEB_GROUP_FOLDER || 'local-web';
 export const LOCAL_WEB_SECRET = process.env.LOCAL_WEB_SECRET || '';
+export const QQ_APP_ID = process.env.QQ_APP_ID || '';
+export const QQ_CLIENT_SECRET = process.env.QQ_CLIENT_SECRET || '';
+export const QQ_SANDBOX = process.env.QQ_SANDBOX === 'true';
 export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 export const FEISHU_CONNECTION_MODE =

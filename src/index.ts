@@ -18,6 +18,9 @@ import {
   FEISHU_PATH,
   FEISHU_PORT,
   FEISHU_VERIFICATION_TOKEN,
+  QQ_APP_ID,
+  QQ_CLIENT_SECRET,
+  QQ_SANDBOX,
   IDLE_TIMEOUT,
   LOCAL_WEB_GROUP_FOLDER,
   LOCAL_WEB_GROUP_JID,
@@ -53,6 +56,7 @@ import {
 } from './session-manager.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { LocalWebChannel } from './channels/local-web/channel.js';
+import { QQChannel } from './channels/qq.js';
 import { FeishuChannel } from './channels/feishu.js';
 import { WhatsAppChannel } from './channels/whatsapp/channel.js';
 import { WeComChannel } from './channels/wecom.js';
@@ -261,6 +265,17 @@ async function main(): Promise<void> {
     const localWeb = new LocalWebChannel({ onMessage: (_jid, msg) => storeMessage(msg), onChatMetadata: (jid, ts, name) => storeChatMetadata(jid, ts, name) });
     channels.push(localWeb);
     await localWeb.connect();
+  }
+
+  if (QQ_APP_ID && QQ_CLIENT_SECRET) {
+    const qq = new QQChannel({
+      appId: QQ_APP_ID,
+      clientSecret: QQ_CLIENT_SECRET,
+      sandbox: QQ_SANDBOX,
+      ...channelCallbacks,
+    });
+    channels.push(qq);
+    try { await qq.connect(); } catch (err) { logger.error({ err }, 'QQ connection failed'); }
   }
 
   if (FEISHU_APP_ID && FEISHU_APP_SECRET) {

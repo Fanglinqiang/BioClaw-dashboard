@@ -159,7 +159,7 @@ In any connected chat, simply message:
 
 ## Messaging channels
 
-Supported platforms include **WhatsApp** (default), **Feishu (Lark)**, **WeCom**, **Discord**, **Slack** (Socket Mode), **WeChat Personal** (experimental), and optional **local web** (browser) chat. Full setup steps, env vars, and disabling channels are in **[docs/CHANNELS.md](docs/CHANNELS.md)** (简体中文：[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)).
+Supported platforms include **WhatsApp** (default), **QQ Official Bot**, **Feishu (Lark)**, **WeCom**, **Discord**, **Slack** (Socket Mode), **WeChat Personal** (experimental), and optional **local web** (browser) chat. Full setup steps, env vars, and disabling channels are in **[docs/CHANNELS.md](docs/CHANNELS.md)** (简体中文：[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)).
 
 **Lab trace** (SSE timeline, workspace tree) is built into the local web UI — no extra config needed. See **[docs/DASHBOARD.md](docs/DASHBOARD.md)**.
 
