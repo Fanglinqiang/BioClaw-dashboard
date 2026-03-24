@@ -11,7 +11,12 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
 
-import { GROUPS_DIR, STORE_DIR } from '../../config.js';
+import {
+  ALLOW_WHATSAPP_SELF_MESSAGES,
+  ASSISTANT_NAME,
+  GROUPS_DIR,
+  STORE_DIR,
+} from '../../config.js';
 import {
   getLastGroupSync,
   setLastGroupSync,
@@ -27,6 +32,7 @@ export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  autoRegister?: (jid: string, name: string, channelName: string) => void;
 }
 
 export class WhatsAppChannel implements Channel {
@@ -167,16 +173,32 @@ export class WhatsAppChannel implements Channel {
         const timestamp = new Date(
           Number(msg.messageTimestamp) * 1000,
         ).toISOString();
+        const sender = msg.key.participant || msg.key.remoteJid || '';
+        const senderName = msg.pushName || sender.split('@')[0] || chatJid.split('@')[0];
+        const isGroup = rawJid.endsWith('@g.us');
+        const chatName = isGroup
+          ? `WhatsApp Group ${chatJid.slice(-8)}`
+          : `WhatsApp DM ${senderName}`;
 
         // Always notify about chat metadata for group discovery
-        this.opts.onChatMetadata(chatJid, timestamp);
+        this.opts.onChatMetadata(chatJid, timestamp, chatName);
 
         // Only deliver full message for registered groups
-        const groups = this.opts.registeredGroups();
+        let groups = this.opts.registeredGroups();
+        if (!groups[chatJid] && this.opts.autoRegister) {
+          this.opts.autoRegister(chatJid, chatName, 'whatsapp');
+          groups = this.opts.registeredGroups();
+        }
+
         if (groups[chatJid]) {
           const content = await this.buildInboundContent(chatJid, msg, groups[chatJid].folder);
-          const sender = msg.key.participant || msg.key.remoteJid || '';
-          const senderName = msg.pushName || sender.split('@')[0];
+          const isBotEcho =
+            Boolean(msg.key.fromMe) &&
+            content.trim().startsWith(`${ASSISTANT_NAME}:`);
+          const allowSelfMessage =
+            ALLOW_WHATSAPP_SELF_MESSAGES &&
+            Boolean(msg.key.fromMe) &&
+            !isBotEcho;
 
           this.opts.onMessage(chatJid, {
             id: msg.key.id || '',
@@ -185,8 +207,12 @@ export class WhatsAppChannel implements Channel {
             sender_name: senderName,
             content,
             timestamp,
-            is_from_me: msg.key.fromMe || false,
+            // Debug mode: allow manually sent self-messages to enter the agent,
+            // but keep bot echoes filtered to avoid self-trigger loops.
+            is_from_me: allowSelfMessage ? false : msg.key.fromMe || false,
           });
+        } else {
+          logger.info({ chatJid }, 'WhatsApp message from unregistered conversation, ignored');
         }
       }
     });

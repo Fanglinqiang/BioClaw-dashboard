@@ -8,6 +8,8 @@ export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Bioclaw';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP !== 'false';
+export const ALLOW_WHATSAPP_SELF_MESSAGES =
+  process.env.ALLOW_WHATSAPP_SELF_MESSAGES === 'true';
 export const ENABLE_LOCAL_WEB = process.env.ENABLE_LOCAL_WEB === 'true';
 export const LOCAL_WEB_HOST = process.env.LOCAL_WEB_HOST || 'localhost';
 export const LOCAL_WEB_PORT = parseInt(process.env.LOCAL_WEB_PORT || '3000', 10);
