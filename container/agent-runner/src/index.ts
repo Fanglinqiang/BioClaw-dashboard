@@ -70,6 +70,9 @@ const OPENAI_TOOL_MAX_ITERATIONS = Math.max(
   1,
   parseInt(process.env.OPENAI_TOOL_MAX_ITERATIONS || '48', 10) || 48,
 );
+const SKILLS_ROOT = '/home/node/.claude/skills';
+const MAX_SKILL_SUMMARY_LINES = 18;
+const MAX_SKILL_DESCRIPTION_CHARS = 140;
 const execAsync = promisify(execChildProcess);
 
 type ProviderKind = 'anthropic' | 'openai-compatible';
@@ -253,7 +256,87 @@ function resolveProviderConfig(env: Record<string, string | undefined>): Provide
   };
 }
 
+interface SkillSummary {
+  name: string;
+  description: string;
+}
+
+function truncateInline(text: string, maxChars: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function extractSkillSummary(skillFilePath: string, dirName: string): SkillSummary | null {
+  try {
+    const content = fs.readFileSync(skillFilePath, 'utf-8');
+    const lines = content.split('\n');
+
+    let name = dirName;
+    let description = '';
+
+    if (lines[0]?.trim() === '---') {
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line === '---') break;
+        const nameMatch = line.match(/^name:\s*(.+)$/i);
+        if (nameMatch) {
+          name = nameMatch[1].trim().replace(/^['"]|['"]$/g, '');
+          continue;
+        }
+        const descMatch = line.match(/^description:\s*(.+)$/i);
+        if (descMatch) {
+          description = descMatch[1].trim().replace(/^['"]|['"]$/g, '');
+        }
+      }
+    }
+
+    if (!description) {
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || line === '---' || line.startsWith('#')) continue;
+        if (line.startsWith('name:') || line.startsWith('description:')) continue;
+        description = line;
+        break;
+      }
+    }
+
+    if (!description) return null;
+    return {
+      name,
+      description: truncateInline(description, MAX_SKILL_DESCRIPTION_CHARS),
+    };
+  } catch (err) {
+    log(`Failed to parse skill summary from ${skillFilePath}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+function getInstalledSkillSummaries(): SkillSummary[] {
+  if (!fs.existsSync(SKILLS_ROOT)) return [];
+
+  const summaries: SkillSummary[] = [];
+  for (const entry of fs.readdirSync(SKILLS_ROOT, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+
+    const skillFilePath = path.join(SKILLS_ROOT, entry.name, 'SKILL.md');
+    if (!fs.existsSync(skillFilePath)) continue;
+
+    const summary = extractSkillSummary(skillFilePath, entry.name);
+    if (summary) summaries.push(summary);
+  }
+
+  return summaries.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function getBioSystemPrompt(): string {
+  const skillSummaries = getInstalledSkillSummaries();
+  const skillLines = skillSummaries
+    .slice(0, MAX_SKILL_SUMMARY_LINES)
+    .map((skill) => `- ${skill.name}: ${skill.description}`);
+  const remainingSkillCount = Math.max(0, skillSummaries.length - skillLines.length);
+
   return [
     '## BioClaw — Biology Research Assistant',
     '',
@@ -280,6 +363,17 @@ function getBioSystemPrompt(): string {
     '- /home/node/.claude/skills/bio-tools/templates/volcano_plot_template.py',
     '- /home/node/.claude/skills/bio-tools/templates/qc_summary_plot_template.py',
     '- /home/node/.claude/skills/bio-tools/templates/pymol_render_template.py',
+    ...(skillLines.length > 0
+      ? [
+          '',
+          'Installed skill modules currently available in this session:',
+          ...skillLines,
+          ...(remainingSkillCount > 0
+            ? [`- ... plus ${remainingSkillCount} more installed skill modules.`]
+            : []),
+          'Do not claim a skill is unavailable if it appears in the installed list above.',
+        ]
+      : []),
     'For publication-ready figures (Cell/Nature/Science style): use cnsplots (volcano, box, heatmap, etc.). For genome browser tracks: use pyGenomeTracks with make_tracks_file + pyGenomeTracks.',
     'Before sending an image, quickly sanity-check that labels are legible, colors are not confusing, and the figure communicates one clear message.',
     'Keep messages concise and action-oriented, and mention important output file paths when relevant.',
