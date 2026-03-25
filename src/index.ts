@@ -3,7 +3,6 @@
  * Top-level startup, shutdown, and wiring. All logic is delegated to sub-modules.
  */
 import 'dotenv/config';
-import { execSync } from 'child_process';
 
 import {
   ASSISTANT_NAME,
@@ -32,6 +31,7 @@ import {
 } from './config.js';
 import { recordAgentTraceEvent } from './agent-trace.js';
 import { ContainerOutput, runContainerAgent } from './container-runner.js';
+import { checkRuntime, cleanupOrphans } from './container-runtime.js';
 import { writeGroupsSnapshot, writeTasksSnapshot } from './group-folder.js';
 import {
   getAllTasks,
@@ -211,23 +211,15 @@ async function runAgent(
 
 // --- Startup ---
 
-function ensureDockerRunning(): void {
-  try { execSync('docker info', { stdio: 'pipe', timeout: 10000 }); } catch {
-    console.error('\nFATAL: Docker is not running. Start Docker Desktop or run: sudo systemctl start docker\n');
-    throw new Error('Docker is required but not running');
-  }
-  try {
-    const output = execSync('docker ps --filter "name=bioclaw-" --format "{{.Names}}"', { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' });
-    const orphans = output.trim().split('\n').filter(Boolean);
-    for (const name of orphans) { try { execSync(`docker stop ${name}`, { stdio: 'pipe' }); } catch {} }
-    if (orphans.length > 0) logger.info({ count: orphans.length }, 'Stopped orphaned containers');
-  } catch {}
+function ensureRuntimeAvailable(): void {
+  checkRuntime();
+  cleanupOrphans();
 }
 
 let whatsapp: WhatsAppChannel | undefined;
 
 async function main(): Promise<void> {
-  ensureDockerRunning();
+  ensureRuntimeAvailable();
   initDatabase();
   logger.info('Database initialized');
   loadState();

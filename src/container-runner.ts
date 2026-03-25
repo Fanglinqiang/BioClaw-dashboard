@@ -3,7 +3,7 @@
  * High-level orchestration: input/output parsing, timeouts, lifecycle.
  * Low-level container operations are in container-runtime.ts.
  */
-import { ChildProcess, exec } from 'child_process';
+import { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -19,6 +19,7 @@ import {
   buildVolumeMounts,
   buildContainerArgs,
   spawnContainer,
+  stopContainer,
   makeContainerName,
 } from './container-runtime.js';
 import { logger } from './logger.js';
@@ -288,12 +289,7 @@ export async function runContainerAgent(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      exec(`docker stop ${containerName}`, { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
-          container.kill('SIGKILL');
-        }
-      });
+      stopContainer(containerName, container, 15000);
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);

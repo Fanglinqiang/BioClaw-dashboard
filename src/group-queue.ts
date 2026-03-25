@@ -1,8 +1,9 @@
-import { ChildProcess, execSync } from 'child_process';
+import { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
+import { stopContainer } from './container-runtime.js';
 import { logger } from './logger.js';
 
 interface QueuedTask {
@@ -284,28 +285,28 @@ export class GroupQueue {
   async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
-    const activeContainers: string[] = [];
+    const activeEntries: { name: string; proc: ChildProcess | null }[] = [];
     for (const [, state] of this.groups) {
       if (state.process && !state.process.killed && state.containerName) {
-        activeContainers.push(state.containerName);
+        activeEntries.push({ name: state.containerName, proc: state.process });
       }
     }
 
-    if (activeContainers.length === 0) {
+    if (activeEntries.length === 0) {
       logger.info('GroupQueue shutting down (no active containers)');
       return;
     }
 
     logger.info(
-      { activeCount: this.activeCount, containers: activeContainers },
+      { activeCount: this.activeCount, containers: activeEntries.map((e) => e.name) },
       'GroupQueue shutting down, stopping containers...',
     );
 
     // Stop all active containers in parallel
-    const stopPromises = activeContainers.map((name) =>
+    const stopPromises = activeEntries.map(({ name, proc }) =>
       new Promise<void>((resolve) => {
         try {
-          execSync(`docker stop ${name}`, { timeout: gracePeriodMs, stdio: 'ignore' });
+          stopContainer(name, proc, gracePeriodMs);
           logger.info({ container: name }, 'Container stopped');
         } catch {
           logger.warn({ container: name }, 'Container stop failed or timed out');

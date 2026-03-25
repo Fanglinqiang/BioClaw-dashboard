@@ -53,6 +53,8 @@ export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
 
+export const CONTAINER_RUNTIME: 'docker' | 'apptainer' =
+  (process.env.CONTAINER_RUNTIME || 'docker').toLowerCase() as 'docker' | 'apptainer';
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'bioclaw-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(
