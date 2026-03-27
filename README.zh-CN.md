@@ -29,6 +29,7 @@
 - [消息通道](#消息通道)
 - [示例演示](#示例演示)
 - [系统架构](#系统架构)
+- [Skills 与 Skills Hub](#skills-与-skills-hub)
 - [内置工具](#内置工具)
 - [项目结构](#项目结构)
 - [引用](#引用)
@@ -226,6 +227,17 @@ BioClaw 基于 NanoClaw 的容器化架构，并融合 STELLA 的生物医学能
 ```
 聊天平台 -> Node.js 编排器 -> SQLite 状态 -> Docker 容器 -> Agent + 生物工具
 ```
+
+## Skills 与 Skills Hub
+
+BioClaw 采用两层 skill 体系：
+
+- **内置 skills** — 约 25 个核心技能，随容器镜像打包（BLAST 搜索、差异表达、单细胞预处理、数据库查询、PubMed 文献检索等），开箱即用。
+- **[Skills Hub](https://github.com/zongtingwei/Bioclaw_Skills_Hub)** — 社区维护的技能仓库，涵盖 10 个领域 70+ 专业技能（蛋白质设计、空间转录组、EHR 分析、多组学整合等）。
+
+Agent 会在运行时自动发现 Hub 中的技能。当用户的任务超出内置 skills 范围时，Agent 会从 GitHub 拉取对应的 skill 定义，缓存到本地后执行——无需手动安装。
+
+如需贡献新技能，请参考 [Skills Hub 贡献指南](https://github.com/zongtingwei/Bioclaw_Skills_Hub/blob/main/CONTRIBUTING.md)。经验证稳定且常用的 skills 会逐步整合进 BioClaw 内置集。
 
 ## 内置工具
 

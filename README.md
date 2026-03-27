@@ -41,6 +41,7 @@ Welcome to join our WeChat group to discuss and exchange ideas! Scan the QR code
 - [Messaging channels](#messaging-channels)
 - [Demo Examples](#demo-examples)
 - [System Architecture](#system-architecture)
+- [Skills & Skills Hub](#skills--skills-hub)
 - [Included Tools](#included-tools)
 - [Project Structure](#project-structure)
 - [Citation](#citation)
@@ -346,6 +347,17 @@ WhatsApp ──► Node.js Orchestrator ──► SQLite (state) ──► Docke
 **Biomedical capabilities (attributed to STELLA):**
 
 The bioinformatics tool suite and domain-specific skills — including sequence analysis, structural biology, literature mining, and data visualization — draw from the tool ecosystem developed in the [STELLA](https://github.com/zaixizhang/STELLA) project, a self-evolving multi-agent framework for biomedical research.
+
+## Skills & Skills Hub
+
+BioClaw uses a two-tier skill system:
+
+- **Built-in skills** — ~25 core skills bundled in the container image (BLAST search, differential expression, single-cell preprocessing, database queries, PubMed search, etc.). Always available, no setup needed.
+- **[Skills Hub](https://github.com/zongtingwei/Bioclaw_Skills_Hub)** — A community-maintained repository with 70+ specialized skills across 10 domains (protein design, spatial transcriptomics, EHR analysis, multi-omics integration, etc.).
+
+The agent automatically discovers Hub skills at runtime. When a user's task isn't covered by built-in skills, the agent fetches the relevant skill definition from the Hub via GitHub, caches it locally, and executes it — no manual installation required.
+
+To contribute new skills, see the [Skills Hub contributing guide](https://github.com/zongtingwei/Bioclaw_Skills_Hub/blob/main/CONTRIBUTING.md). Skills that prove stable and widely useful may be promoted into BioClaw's built-in set.
 
 ## Included Tools
 
