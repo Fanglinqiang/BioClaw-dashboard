@@ -97,7 +97,7 @@ export function setLastGroupSync(): void {
 export function storeMessage(msg: NewMessage): void {
   const db = getDb();
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, message_type, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -105,6 +105,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.sender_name,
     msg.content,
     msg.timestamp,
+    msg.message_type || 'chat',
     msg.is_from_me ? 1 : 0,
   );
 }
@@ -120,10 +121,11 @@ export function storeMessageDirect(msg: {
   content: string;
   timestamp: string;
   is_from_me: boolean;
+  message_type?: 'chat' | 'control' | 'system';
 }): void {
   const db = getDb();
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, message_type, is_from_me) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -131,6 +133,7 @@ export function storeMessageDirect(msg: {
     msg.sender_name,
     msg.content,
     msg.timestamp,
+    msg.message_type || 'chat',
     msg.is_from_me ? 1 : 0,
   );
 }
@@ -145,9 +148,12 @@ export function getNewMessages(
   const db = getDb();
   const placeholders = jids.map(() => '?').join(',');
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, message_type
     FROM messages
-    WHERE timestamp > ? AND chat_jid IN (${placeholders}) AND content NOT LIKE ?
+    WHERE timestamp > ?
+      AND chat_jid IN (${placeholders})
+      AND content NOT LIKE ?
+      AND COALESCE(message_type, 'chat') = 'chat'
     ORDER BY timestamp
   `;
 
@@ -170,9 +176,13 @@ export function getMessagesSince(
 ): NewMessage[] {
   const db = getDb();
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, message_type
     FROM messages
-    WHERE chat_jid = ? AND timestamp > ? AND is_from_me = 0 AND content NOT LIKE ?
+    WHERE chat_jid = ?
+      AND timestamp > ?
+      AND is_from_me = 0
+      AND content NOT LIKE ?
+      AND COALESCE(message_type, 'chat') = 'chat'
     ORDER BY timestamp
   `;
   return db
@@ -188,7 +198,7 @@ export function getRecentMessages(
   return db
     .prepare(
       `
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, message_type
       FROM messages
       WHERE chat_jid = ?
       ORDER BY timestamp DESC
@@ -209,7 +219,7 @@ export function getRecentMessagesForChats(
   return db
     .prepare(
       `
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, message_type
       FROM messages
       WHERE chat_jid IN (${placeholders})
       ORDER BY timestamp DESC

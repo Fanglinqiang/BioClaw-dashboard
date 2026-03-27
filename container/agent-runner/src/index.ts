@@ -30,6 +30,14 @@ interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  agentSystemPrompt?: string;
+  workdir?: string;
+  runtimeConfig?: {
+    provider?: 'anthropic' | 'openrouter' | 'openai-compatible';
+    model?: string;
+    baseUrl?: string;
+    enabledSkills?: string[];
+  };
   secrets?: Record<string, string>;
 }
 
@@ -67,6 +75,7 @@ const IPC_TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const IPC_FILES_DIR = path.join(IPC_DIR, 'files');
 const BASH_TIMEOUT_MS = 5 * 60 * 1000;
 const BASH_MAX_OUTPUT_CHARS = 12000;
+const WORKSPACE_GROUP_ROOT = '/workspace/group';
 const OPENAI_TOOL_MAX_ITERATIONS = Math.max(
   1,
   parseInt(process.env.OPENAI_TOOL_MAX_ITERATIONS || '48', 10) || 48,
@@ -224,6 +233,51 @@ function log(message: string): void {
 function truncateOutput(text: string | undefined | null, maxChars = BASH_MAX_OUTPUT_CHARS): string {
   if (!text) return '';
   return text.length > maxChars ? `${text.slice(0, maxChars)}\n... [truncated]` : text;
+}
+
+function resolveWorkdir(workdir?: string): string {
+  const raw = typeof workdir === 'string' ? workdir.trim() : '';
+  if (!raw || raw === '.' || raw === '/') {
+    return WORKSPACE_GROUP_ROOT;
+  }
+
+  let target = WORKSPACE_GROUP_ROOT;
+  if (raw.startsWith(WORKSPACE_GROUP_ROOT)) {
+    target = path.posix.normalize(raw);
+  } else if (raw.startsWith('/')) {
+    log(`Ignoring invalid workdir outside workspace root: ${raw}`);
+    return WORKSPACE_GROUP_ROOT;
+  } else {
+    target = path.posix.normalize(path.posix.join(WORKSPACE_GROUP_ROOT, raw));
+  }
+
+  const rel = path.posix.relative(WORKSPACE_GROUP_ROOT, target);
+  if (rel.startsWith('..') || path.posix.isAbsolute(rel)) {
+    log(`Ignoring escaping workdir outside workspace root: ${raw}`);
+    return WORKSPACE_GROUP_ROOT;
+  }
+  if (!fs.existsSync(target)) {
+    log(`Configured workdir does not exist, falling back to workspace root: ${target}`);
+    return WORKSPACE_GROUP_ROOT;
+  }
+  try {
+    if (!fs.statSync(target).isDirectory()) {
+      log(`Configured workdir is not a directory, falling back to workspace root: ${target}`);
+      return WORKSPACE_GROUP_ROOT;
+    }
+  } catch (err) {
+    log(`Failed to inspect workdir ${target}, falling back to workspace root: ${err instanceof Error ? err.message : String(err)}`);
+    return WORKSPACE_GROUP_ROOT;
+  }
+  return target;
+}
+
+function buildEnabledSkillsBlock(enabledSkills?: string[]): string {
+  const skills = Array.isArray(enabledSkills)
+    ? enabledSkills.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    : [];
+  if (skills.length === 0) return '';
+  return `\n\n[Preferred skill modules]\nPrefer these installed skills first when they are relevant to the task:\n${skills.map((skill) => `- ${skill}`).join('\n')}\n`;
 }
 
 function writeIpcFile(dir: string, data: object): string {
@@ -755,6 +809,7 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  const currentWorkdir = resolveWorkdir(containerInput.workdir);
 
   // BioClaw: inject biology-specific system context
   const bioSystemPrompt = getBioSystemPrompt()
@@ -767,7 +822,12 @@ async function runQuery(
   const globalContent = fs.existsSync(globalClaudeMdPath)
     ? fs.readFileSync(globalClaudeMdPath, 'utf-8')
     : '';
-  globalClaudeMd = bioSystemPrompt + globalContent;
+  const agentMemoryBlock = containerInput.agentSystemPrompt
+    ? `\n\n[Agent memory]\n${containerInput.agentSystemPrompt.trim()}\n`
+    : '';
+  const enabledSkillsBlock = buildEnabledSkillsBlock(containerInput.runtimeConfig?.enabledSkills);
+  const workdirBlock = `\n\n[Current working directory]\n${currentWorkdir}\n`;
+  globalClaudeMd = bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + workdirBlock;
 
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
@@ -788,7 +848,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
-      cwd: '/workspace/group',
+      cwd: currentWorkdir,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
@@ -958,7 +1018,11 @@ function getOpenAICompatibleTools() {
   ] as const;
 }
 
-async function runBashTool(command: string, env: Record<string, string | undefined>): Promise<string> {
+async function runBashTool(
+  command: string,
+  env: Record<string, string | undefined>,
+  cwd: string,
+): Promise<string> {
   const safeEnv = { ...env } as Record<string, string | undefined>;
   for (const secretVar of SECRET_ENV_VARS) {
     delete safeEnv[secretVar];
@@ -966,7 +1030,7 @@ async function runBashTool(command: string, env: Record<string, string | undefin
 
   try {
     const { stdout, stderr } = await execAsync(command, {
-      cwd: '/workspace/group',
+      cwd,
       env: Object.fromEntries(
         Object.entries(safeEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
       ),
@@ -994,6 +1058,7 @@ async function executeOpenAIToolCall(
   rawArgs: string,
   containerInput: ContainerInput,
   env: Record<string, string | undefined>,
+  cwd: string,
 ): Promise<string> {
   let args: Record<string, string> = {};
   try {
@@ -1005,7 +1070,7 @@ async function executeOpenAIToolCall(
   switch (toolName) {
     case 'bash':
       if (!args.command) return 'Missing required argument: command';
-      return runBashTool(args.command, env);
+      return runBashTool(args.command, env, cwd);
     case 'send_message':
       if (!args.text) return 'Missing required argument: text';
       queueIpcMessage(containerInput.chatJid, containerInput.groupFolder, args.text);
@@ -1076,6 +1141,7 @@ async function runOpenAICompatibleConversation(
   sessionId: string | undefined,
   containerInput: ContainerInput,
   env: Record<string, string | undefined>,
+  cwd: string,
   providerConfig: ProviderConfig,
   existingMessages?: OpenAIChatMessage[],
 ): Promise<{ newSessionId: string; closedDuringQuery: boolean; messages: OpenAIChatMessage[] }> {
@@ -1089,8 +1155,13 @@ async function runOpenAICompatibleConversation(
         const globalContent = fs.existsSync(globalClaudeMdPath)
           ? fs.readFileSync(globalClaudeMdPath, 'utf-8')
           : '';
+        const agentMemoryBlock = containerInput.agentSystemPrompt
+          ? `\n\n[Agent memory]\n${containerInput.agentSystemPrompt.trim()}\n`
+          : '';
+        const enabledSkillsBlock = buildEnabledSkillsBlock(containerInput.runtimeConfig?.enabledSkills);
+        const workdirBlock = `\n\n[Current working directory]\n${cwd}\n`;
         return [
-          { role: 'system', content: bioSystemPrompt + globalContent },
+          { role: 'system', content: bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + workdirBlock },
           { role: 'user', content: prompt },
         ];
       })();
@@ -1124,6 +1195,7 @@ async function runOpenAICompatibleConversation(
         toolCall.function.arguments,
         containerInput,
         env,
+        cwd,
       );
 
       messages.push({
@@ -1163,7 +1235,9 @@ async function main(): Promise<void> {
     sdkEnv[key] = value;
   }
   const providerConfig = resolveProviderConfig(sdkEnv);
+  const currentWorkdir = resolveWorkdir(containerInput.workdir);
   log(`Using provider: ${providerConfig.provider}${providerConfig.model ? ` (${providerConfig.model})` : ''}`);
+  log(`Using workdir: ${currentWorkdir}`);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
@@ -1211,6 +1285,7 @@ async function main(): Promise<void> {
           sessionId,
           containerInput,
           sdkEnv,
+          currentWorkdir,
           providerConfig,
           openAiMessages,
         );

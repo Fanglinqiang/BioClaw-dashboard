@@ -29,6 +29,7 @@ function store(overrides: {
   content: string;
   timestamp: string;
   is_from_me?: boolean;
+  message_type?: 'chat' | 'control' | 'system';
 }) {
   storeMessage({
     id: overrides.id,
@@ -38,6 +39,7 @@ function store(overrides: {
     content: overrides.content,
     timestamp: overrides.timestamp,
     is_from_me: overrides.is_from_me ?? false,
+    message_type: overrides.message_type,
   });
 }
 
@@ -169,6 +171,21 @@ describe('getMessagesSince', () => {
     // 3 user messages (bot message excluded)
     expect(msgs).toHaveLength(3);
   });
+
+  it('excludes control messages from agent polling', () => {
+    store({
+      id: 'control-1',
+      chat_jid: 'group@g.us',
+      sender: 'user@s.whatsapp.net',
+      sender_name: 'User',
+      content: '/status',
+      timestamp: '2024-01-01T00:00:05.000Z',
+      message_type: 'control',
+    });
+
+    const msgs = getMessagesSince('group@g.us', '', 'Bio');
+    expect(msgs.some((msg) => msg.id === 'control-1')).toBe(false);
+  });
 });
 
 // --- getNewMessages ---
@@ -222,6 +239,25 @@ describe('getNewMessages', () => {
     const { messages, newTimestamp } = getNewMessages([], '', 'Bio');
     expect(messages).toHaveLength(0);
     expect(newTimestamp).toBe('');
+  });
+
+  it('excludes control messages from global polling', () => {
+    store({
+      id: 'ctl-1',
+      chat_jid: 'group1@g.us',
+      sender: 'user@s.whatsapp.net',
+      sender_name: 'User',
+      content: '/doctor',
+      timestamp: '2024-01-01T00:00:05.000Z',
+      message_type: 'control',
+    });
+
+    const { messages } = getNewMessages(
+      ['group1@g.us', 'group2@g.us'],
+      '2024-01-01T00:00:00.000Z',
+      'Bio',
+    );
+    expect(messages.some((msg) => msg.id === 'ctl-1')).toBe(false);
   });
 });
 

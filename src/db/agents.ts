@@ -1,5 +1,5 @@
 import { getDb } from './connection.js';
-import { AgentDefinition } from '../types.js';
+import { AgentDefinition, AgentRuntimeConfig } from '../types.js';
 
 export function getAgent(id: string): AgentDefinition | undefined {
   const db = getDb();
@@ -12,6 +12,7 @@ export function getAgent(id: string): AgentDefinition | undefined {
         name: string;
         description: string | null;
         system_prompt: string | null;
+        runtime_config: string | null;
         container_config: string | null;
         created_at: string;
         updated_at: string | null;
@@ -25,6 +26,9 @@ export function getAgent(id: string): AgentDefinition | undefined {
     name: row.name,
     description: row.description || undefined,
     systemPrompt: row.system_prompt || undefined,
+    runtimeConfig: row.runtime_config
+      ? JSON.parse(row.runtime_config) as AgentRuntimeConfig
+      : undefined,
     containerConfig: row.container_config
       ? JSON.parse(row.container_config)
       : undefined,
@@ -44,6 +48,7 @@ export function getAllAgents(): Record<string, AgentDefinition> {
       name: string;
       description: string | null;
       system_prompt: string | null;
+      runtime_config: string | null;
       container_config: string | null;
       created_at: string;
       updated_at: string | null;
@@ -57,6 +62,9 @@ export function getAllAgents(): Record<string, AgentDefinition> {
       name: row.name,
       description: row.description || undefined,
       systemPrompt: row.system_prompt || undefined,
+      runtimeConfig: row.runtime_config
+        ? JSON.parse(row.runtime_config) as AgentRuntimeConfig
+        : undefined,
       containerConfig: row.container_config
         ? JSON.parse(row.container_config)
         : undefined,
@@ -74,8 +82,8 @@ export function upsertAgent(agent: AgentDefinition): void {
     `
       INSERT OR REPLACE INTO agents (
         id, workspace_folder, name, description, system_prompt,
-        container_config, created_at, updated_at, archived
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        runtime_config, container_config, created_at, updated_at, archived
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     agent.id,
@@ -83,6 +91,7 @@ export function upsertAgent(agent: AgentDefinition): void {
     agent.name,
     agent.description || null,
     agent.systemPrompt || null,
+    agent.runtimeConfig ? JSON.stringify(agent.runtimeConfig) : null,
     agent.containerConfig ? JSON.stringify(agent.containerConfig) : null,
     agent.createdAt,
     agent.updatedAt || null,
@@ -138,4 +147,3 @@ export function getAllDefaultChatAgentBindings(): Record<string, string> {
   }
   return result;
 }
-

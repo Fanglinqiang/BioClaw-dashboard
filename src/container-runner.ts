@@ -23,7 +23,7 @@ import {
   makeContainerName,
 } from './container-runtime.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { AgentRuntimeConfig, RegisteredGroup } from './types.js';
 import { getWorkspaceFolder } from './workspace.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -38,6 +38,9 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  agentSystemPrompt?: string;
+  runtimeConfig?: AgentRuntimeConfig;
+  workdir?: string;
   secrets?: Record<string, string>;
 }
 
@@ -208,7 +211,27 @@ export async function runContainerAgent(
     let stderrTruncated = false;
 
     // Pass secrets via stdin (never written to disk or mounted as files)
-    input.secrets = readSecrets();
+    const effectiveSecrets = {
+      ...readSecrets(),
+    };
+    if (input.runtimeConfig?.provider) {
+      effectiveSecrets.MODEL_PROVIDER = input.runtimeConfig.provider;
+    }
+    if (input.runtimeConfig?.model) {
+      if (input.runtimeConfig.provider === 'openai-compatible') {
+        effectiveSecrets.OPENAI_COMPATIBLE_MODEL = input.runtimeConfig.model;
+      } else {
+        effectiveSecrets.OPENROUTER_MODEL = input.runtimeConfig.model;
+      }
+    }
+    if (input.runtimeConfig?.baseUrl) {
+      if (input.runtimeConfig.provider === 'openai-compatible') {
+        effectiveSecrets.OPENAI_COMPATIBLE_BASE_URL = input.runtimeConfig.baseUrl;
+      } else {
+        effectiveSecrets.OPENROUTER_BASE_URL = input.runtimeConfig.baseUrl;
+      }
+    }
+    input.secrets = effectiveSecrets;
     container.stdin!.write(JSON.stringify(input));
     container.stdin!.end();
     // Remove secrets from input so they don't appear in logs

@@ -10,6 +10,7 @@ export function normalizeRegisteredGroup(group: RegisteredGroup): RegisteredGrou
   return {
     ...group,
     workspaceFolder: getWorkspaceFolder(group),
+    archived: group.archived === true,
   };
 }
 

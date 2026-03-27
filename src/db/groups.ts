@@ -16,7 +16,8 @@ export function getRegisteredGroup(
       trigger_pattern: string;
       added_at: string;
       container_config: string | null;
-        requires_trigger: number | null;
+      requires_trigger: number | null;
+      archived: number | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -31,6 +32,7 @@ export function getRegisteredGroup(
       ? JSON.parse(row.container_config)
       : undefined,
     requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    archived: row.archived === 1,
   };
 }
 
@@ -40,8 +42,8 @@ export function setRegisteredGroup(
 ): void {
   const db = getDb();
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, workspace_folder, trigger_pattern, added_at, container_config, requires_trigger)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, workspace_folder, trigger_pattern, added_at, container_config, requires_trigger, archived)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -51,6 +53,7 @@ export function setRegisteredGroup(
     group.added_at,
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
+    group.archived ? 1 : 0,
   );
 }
 
@@ -67,6 +70,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     added_at: string;
     container_config: string | null;
     requires_trigger: number | null;
+    archived: number | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -80,6 +84,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         ? JSON.parse(row.container_config)
         : undefined,
       requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+      archived: row.archived === 1,
     };
   }
   return result;

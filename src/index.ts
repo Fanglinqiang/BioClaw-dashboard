@@ -51,7 +51,9 @@ import {
   loadState,
   saveState,
   registerGroup,
+  upsertRegisteredGroupDefinition,
   getRegisteredGroupsMap,
+  getAgentsMap,
   getSessions,
   updateSession,
   getLastAgentTimestamp,
@@ -62,6 +64,7 @@ import {
   getWorkspaceFolderForChat,
   getWorkspaceFolderForAgent,
   getChatJidsForWorkspace,
+  touchCurrentThreadForChat,
 } from './session-manager.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { LocalWebChannel } from './channels/local-web/channel.js';
@@ -75,6 +78,13 @@ import { WeChatChannel } from './channels/wechat.js';
 import { Channel, NewMessage } from './types.js';
 import { logger } from './logger.js';
 import { getRuntimeGroupForWorkspace, getWorkspaceFolder } from './workspace.js';
+import {
+  executeControlCommand,
+  getDoctorSnapshot,
+  getManagementSnapshot,
+  getStatusSnapshot,
+  ThreadSummary,
+} from './control-plane.js';
 
 const WORKSPACE_SYNC_HEADER = '[Workspace sync from linked clients]';
 
@@ -343,6 +353,7 @@ async function runAgent(
   const isMain = workspaceFolder === MAIN_GROUP_FOLDER;
   const sessions = getSessions();
   const sessionId = sessions[agentId];
+  const agent = getAgentsMap()[agentId];
 
   const tasks = getAllTasks();
   writeTasksSnapshot(agentId, isMain, tasks.map((t) => ({
@@ -371,7 +382,17 @@ async function runAgent(
   try {
     const out = await runContainerAgent(
       group,
-      { prompt, sessionId, groupFolder: workspaceFolder, agentId, chatJid, isMain },
+      {
+        prompt,
+        sessionId,
+        groupFolder: workspaceFolder,
+        agentId,
+        chatJid,
+        isMain,
+        agentSystemPrompt: agent?.systemPrompt,
+        runtimeConfig: agent?.runtimeConfig,
+        workdir: agent?.runtimeConfig?.workdir,
+      },
       (proc, cn) => queue.registerProcess(agentId, proc, cn, agentId),
       wrappedOnOutput,
     );
@@ -402,6 +423,65 @@ function ensureRuntimeAvailable(): void {
 }
 
 let whatsapp: WhatsAppChannel | undefined;
+let listLocalWebThreads: (() => ThreadSummary[]) | undefined;
+let createLocalWebThread:
+  | ((title?: string) => Promise<ThreadSummary>)
+  | undefined;
+let renameLocalWebThread:
+  | ((chatJid: string, title: string) => Promise<ThreadSummary | undefined>)
+  | undefined;
+let archiveLocalWebThread:
+  | ((chatJid: string) => Promise<{ archivedChatJid: string; nextChatJid?: string } | undefined>)
+  | undefined;
+
+const controlPlaneDeps = {
+  channels: () => channels,
+  listThreads: () => listLocalWebThreads?.() || [],
+  createThread: (title?: string) => {
+    if (!createLocalWebThread) {
+      throw new Error('Thread creation not supported');
+    }
+    return createLocalWebThread(title);
+  },
+};
+
+async function handleInboundMessage(msg: NewMessage): Promise<void> {
+  const commandResult = await executeControlCommand(
+    msg.chat_jid,
+    msg.content,
+    controlPlaneDeps,
+  );
+
+  if (commandResult.handled) {
+    touchCurrentThreadForChat(msg.chat_jid);
+    storeMessage({
+      ...msg,
+      message_type: 'control',
+    });
+    if (commandResult.dispatchPrompt) {
+      const originalTs = new Date(msg.timestamp).getTime();
+      const dispatchTimestamp = new Date(
+        Math.max(Date.now(), Number.isNaN(originalTs) ? 0 : originalTs + 1),
+      ).toISOString();
+      storeMessage({
+        ...msg,
+        id: `${msg.id}::dispatch`,
+        content: commandResult.dispatchPrompt,
+        timestamp: dispatchTimestamp,
+        message_type: 'chat',
+      });
+    }
+    notifyLocalWebWorkspaceUpdate(msg.chat_jid);
+    if (commandResult.response) {
+      await sendToChannel(msg.chat_jid, commandResult.response);
+    }
+    return;
+  }
+
+  touchCurrentThreadForChat(msg.chat_jid);
+  storeMessage(msg);
+  notifyLocalWebWorkspaceUpdate(msg.chat_jid);
+}
 
 async function main(): Promise<void> {
   ensureRuntimeAvailable();
@@ -420,8 +500,9 @@ async function main(): Promise<void> {
 
   const channelCallbacks = {
     onMessage: (_chatJid: string, msg: NewMessage) => {
-      storeMessage(msg);
-      notifyLocalWebWorkspaceUpdate(msg.chat_jid);
+      void handleInboundMessage(msg).catch((err) => {
+        logger.error({ err, chatJid: msg.chat_jid }, 'Failed to handle inbound message');
+      });
     },
     onChatMetadata: (chatJid: string, timestamp: string, name?: string) => {
       storeChatMetadata(chatJid, timestamp, name);
@@ -446,13 +527,13 @@ async function main(): Promise<void> {
       }
     }
 
-    const listLocalWebThreads = () => {
+    listLocalWebThreads = () => {
       const chatInfoByJid = Object.fromEntries(
         getAllChats().map((chat) => [chat.jid, chat]),
       );
 
       return Object.entries(getRegisteredGroupsMap())
-        .filter(([jid]) => jid.endsWith('@local.web'))
+        .filter(([jid, group]) => jid.endsWith('@local.web') && !group.archived)
         .map(([jid, group]) => {
           const chatInfo = chatInfoByJid[jid];
           const workspaceFolder = getWorkspaceFolderForChat(jid) || group.folder;
@@ -468,7 +549,7 @@ async function main(): Promise<void> {
         .sort((a, b) => (b.lastActivity || b.addedAt).localeCompare(a.lastActivity || a.addedAt));
     };
 
-    const createLocalWebThread = async (title?: string) => {
+    createLocalWebThread = async (title?: string) => {
       const now = new Date().toISOString();
       const token = randomUUID().replace(/-/g, '').slice(0, 12);
       const chatJid = `thread-${token}@local.web`;
@@ -483,13 +564,45 @@ async function main(): Promise<void> {
         requiresTrigger: false,
       });
       storeChatMetadata(chatJid, now, threadTitle);
-      return listLocalWebThreads().find((thread) => thread.chatJid === chatJid)!;
+      const threads = listLocalWebThreads ? listLocalWebThreads() : [];
+      return threads.find((thread) => thread.chatJid === chatJid)!;
+    };
+
+    renameLocalWebThread = async (chatJid: string, title: string) => {
+      const group = getRegisteredGroupsMap()[chatJid];
+      if (!group || group.archived) return undefined;
+      const updated = {
+        ...group,
+        name: sanitizeLocalWebThreadTitle(title),
+      };
+      upsertRegisteredGroupDefinition(chatJid, updated);
+      storeChatMetadata(chatJid, new Date().toISOString(), updated.name);
+      const threads = listLocalWebThreads ? listLocalWebThreads() : [];
+      return threads.find((thread) => thread.chatJid === chatJid);
+    };
+
+    archiveLocalWebThread = async (chatJid: string) => {
+      const threads = listLocalWebThreads ? listLocalWebThreads() : [];
+      if (threads.length <= 1) return undefined;
+      const group = getRegisteredGroupsMap()[chatJid];
+      if (!group || group.archived) return undefined;
+      upsertRegisteredGroupDefinition(chatJid, {
+        ...group,
+        archived: true,
+      });
+      const remainingThreads = listLocalWebThreads ? listLocalWebThreads() : [];
+      const nextChatJid = remainingThreads[0]?.chatJid;
+      return {
+        archivedChatJid: chatJid,
+        nextChatJid,
+      };
     };
 
     localWeb = new LocalWebChannel({
       onMessage: (_jid, msg) => {
-        storeMessage(msg);
-        notifyLocalWebWorkspaceUpdate(msg.chat_jid);
+        void handleInboundMessage(msg).catch((err) => {
+          logger.error({ err, chatJid: msg.chat_jid }, 'Failed to handle local web message');
+        });
       },
       onChatMetadata: (jid, ts, name) => {
         storeChatMetadata(jid, ts, name);
@@ -497,6 +610,13 @@ async function main(): Promise<void> {
       },
       listThreads: listLocalWebThreads,
       createThread: createLocalWebThread,
+      renameThread: renameLocalWebThread,
+      archiveThread: archiveLocalWebThread,
+      getStatusSnapshot: (chatJid) => getStatusSnapshot(chatJid, controlPlaneDeps),
+      getDoctorSnapshot: (chatJid) => getDoctorSnapshot(chatJid, controlPlaneDeps),
+      getManagementSnapshot: () => getManagementSnapshot(controlPlaneDeps),
+      executeCommand: (chatJid, text) =>
+        executeControlCommand(chatJid, text, controlPlaneDeps),
       getWorkspaceFolder: (chatJid) =>
         getWorkspaceFolderForChat(chatJid) || LOCAL_WEB_GROUP_FOLDER,
       getWorkspaceChatJids: (chatJid) => [chatJid],

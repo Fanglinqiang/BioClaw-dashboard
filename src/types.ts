@@ -32,15 +32,38 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
+export interface AgentRuntimeConfig {
+  provider?: 'anthropic' | 'openrouter' | 'openai-compatible';
+  model?: string;
+  baseUrl?: string;
+  workdir?: string; // Relative path under /workspace/group; '.' means workspace root
+  dirHistory?: string[]; // Most-recent-first relative paths under /workspace/group
+  commands?: Record<string, string>;
+  aliases?: Record<string, string>;
+  enabledSkills?: string[];
+}
+
 export interface AgentDefinition {
   id: string;
   workspaceFolder: string;
   name: string;
   description?: string;
   systemPrompt?: string;
+  runtimeConfig?: AgentRuntimeConfig;
   containerConfig?: ContainerConfig;
   createdAt: string;
   updatedAt?: string;
+  archived?: boolean;
+}
+
+export interface ChatThreadDefinition {
+  id: string;
+  chatJid: string;
+  title: string;
+  workspaceFolder: string;
+  agentId: string;
+  createdAt: string;
+  updatedAt: string;
   archived?: boolean;
 }
 
@@ -52,6 +75,7 @@ export interface RegisteredGroup {
   added_at: string;
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
+  archived?: boolean;
 }
 
 export interface NewMessage {
@@ -62,6 +86,7 @@ export interface NewMessage {
   content: string;
   timestamp: string;
   is_from_me?: boolean;
+  message_type?: 'chat' | 'control' | 'system';
 }
 
 export interface ScheduledTask {
@@ -69,6 +94,7 @@ export interface ScheduledTask {
   group_folder: string;
   chat_jid: string;
   agent_id?: string;
+  label?: string | null;
   prompt: string;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;
@@ -104,7 +130,10 @@ export interface Channel {
 }
 
 // Callback type that channels use to deliver inbound messages
-export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
+export type OnInboundMessage = (
+  chatJid: string,
+  message: NewMessage,
+) => void | Promise<void>;
 
 // Callback for chat metadata discovery.
 // name is optional — channels that deliver names inline (Telegram) pass it here;

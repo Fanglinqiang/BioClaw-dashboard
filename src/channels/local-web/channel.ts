@@ -40,6 +40,26 @@ interface LocalWebChannelOpts {
     lastActivity?: string;
     agentId?: string;
   }>;
+  renameThread?: (chatJid: string, title: string) => Promise<{
+    chatJid: string;
+    title: string;
+    workspaceFolder: string;
+    addedAt: string;
+    lastActivity?: string;
+    agentId?: string;
+  } | undefined>;
+  archiveThread?: (chatJid: string) => Promise<{
+    archivedChatJid: string;
+    nextChatJid?: string;
+  } | undefined>;
+  getStatusSnapshot?: (chatJid: string) => unknown;
+  getDoctorSnapshot?: (chatJid: string) => unknown;
+  getManagementSnapshot?: () => unknown;
+  executeCommand?: (chatJid: string, text: string) => Promise<{
+    handled: boolean;
+    response?: string;
+    data?: unknown;
+  }>;
 }
 
 interface IncomingPayload {
@@ -298,9 +318,118 @@ export class LocalWebChannel implements Channel {
       return;
     }
 
+    if ((req.method === 'PATCH' || req.method === 'DELETE') && url.pathname.startsWith('/api/threads/')) {
+      const encodedChatJid = url.pathname.slice('/api/threads/'.length);
+      const threadChatJid = decodeURIComponent(encodedChatJid);
+
+      if (req.method === 'PATCH') {
+        if (!this.opts.renameThread) {
+          sendJson(res, 501, { error: 'Thread rename not supported' });
+          return;
+        }
+        const body = (await readBody(req)).toString('utf-8');
+        const payload = JSON.parse(body || '{}') as { title?: string };
+        const title = payload.title?.trim() || '';
+        if (!title) {
+          sendJson(res, 400, { error: 'Missing thread title' });
+          return;
+        }
+        const thread = await this.opts.renameThread(threadChatJid, title);
+        if (!thread) {
+          sendJson(res, 404, { error: 'Thread not found' });
+          return;
+        }
+        sendJson(res, 200, { ok: true, thread });
+        return;
+      }
+
+      if (!this.opts.archiveThread) {
+        sendJson(res, 501, { error: 'Thread archive not supported' });
+        return;
+      }
+      const result = await this.opts.archiveThread(threadChatJid);
+      if (!result) {
+        sendJson(res, 404, { error: 'Thread not found or cannot be archived' });
+        return;
+      }
+      sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/events') {
       const chatJid = url.searchParams.get('chatJid') || LOCAL_WEB_GROUP_JID;
       this.wireSse(res, chatJid);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/status') {
+      const chatJid = url.searchParams.get('chatJid') || LOCAL_WEB_GROUP_JID;
+      sendJson(res, 200, {
+        ok: true,
+        status: this.opts.getStatusSnapshot?.(chatJid) || null,
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/doctor') {
+      const chatJid = url.searchParams.get('chatJid') || LOCAL_WEB_GROUP_JID;
+      sendJson(res, 200, {
+        ok: true,
+        doctor: this.opts.getDoctorSnapshot?.(chatJid) || null,
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/overview') {
+      sendJson(res, 200, {
+        ok: true,
+        overview: this.opts.getManagementSnapshot?.() || {},
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/agents') {
+      const overview = this.opts.getManagementSnapshot?.() as Record<string, unknown> | undefined;
+      sendJson(res, 200, {
+        ok: true,
+        agents: Array.isArray(overview?.agents) ? overview.agents : [],
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/workspaces') {
+      const overview = this.opts.getManagementSnapshot?.() as Record<string, unknown> | undefined;
+      sendJson(res, 200, {
+        ok: true,
+        workspaces: Array.isArray(overview?.workspaces) ? overview.workspaces : [],
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/tasks') {
+      const overview = this.opts.getManagementSnapshot?.() as Record<string, unknown> | undefined;
+      sendJson(res, 200, {
+        ok: true,
+        tasks: Array.isArray(overview?.tasks) ? overview.tasks : [],
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/manage/command') {
+      if (!this.opts.executeCommand) {
+        sendJson(res, 501, { error: 'Command execution not supported' });
+        return;
+      }
+      const body = (await readBody(req)).toString('utf-8');
+      const payload = JSON.parse(body || '{}') as { chatJid?: string; text?: string };
+      const chatJid = payload.chatJid || LOCAL_WEB_GROUP_JID;
+      const text = payload.text?.trim() || '';
+      if (!text) {
+        sendJson(res, 400, { error: 'Missing command text' });
+        return;
+      }
+      const result = await this.opts.executeCommand(chatJid, text);
+      sendJson(res, 200, { ok: true, ...result });
       return;
     }
 

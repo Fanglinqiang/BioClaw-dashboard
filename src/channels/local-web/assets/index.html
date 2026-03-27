@@ -102,6 +102,28 @@
           <code class="jid-box" id="sessionJid"></code>
         </div>
       </div>
+      <div class="drawer-section">
+        <div class="drawer-section-head">
+          <h3 id="secControl"></h3>
+          <button type="button" class="btn-setting btn-inline" id="manageRefreshBtn"></button>
+        </div>
+        <div class="setting-stack">
+          <label class="setting-label" for="manageCommandInput" id="lblControlCommand"></label>
+          <div class="setting-inline">
+            <input type="text" id="manageCommandInput" class="manage-input" autocomplete="off">
+            <button type="button" class="btn-setting btn-inline" id="manageCommandBtn"></button>
+          </div>
+          <pre class="manage-block" id="manageCommandOutput"></pre>
+        </div>
+        <div class="setting-stack">
+          <label class="setting-label" id="lblStatusPanel"></label>
+          <pre class="manage-block" id="manageStatusPanel"></pre>
+        </div>
+        <div class="setting-stack">
+          <label class="setting-label" id="lblDoctorPanel"></label>
+          <pre class="manage-block" id="manageDoctorPanel"></pre>
+        </div>
+      </div>
     </div>
   </aside>
   <script src="/vendor/marked.umd.js"></script>

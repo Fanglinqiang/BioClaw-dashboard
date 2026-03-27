@@ -25,6 +25,7 @@ function createSchema(database: Database.Database): void {
       sender_name TEXT,
       content TEXT,
       timestamp TEXT,
+      message_type TEXT DEFAULT 'chat',
       is_from_me INTEGER,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
@@ -36,6 +37,7 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT NOT NULL,
       chat_jid TEXT NOT NULL,
       prompt TEXT NOT NULL,
+      label TEXT,
       schedule_type TEXT NOT NULL,
       schedule_value TEXT NOT NULL,
       next_run TEXT,
@@ -79,7 +81,8 @@ function createSchema(database: Database.Database): void {
       trigger_pattern TEXT NOT NULL,
       added_at TEXT NOT NULL,
       container_config TEXT,
-      requires_trigger INTEGER DEFAULT 1
+      requires_trigger INTEGER DEFAULT 1,
+      archived INTEGER DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_registered_groups_workspace_folder
       ON registered_groups(workspace_folder);
@@ -89,6 +92,7 @@ function createSchema(database: Database.Database): void {
       name TEXT NOT NULL,
       description TEXT,
       system_prompt TEXT,
+      runtime_config TEXT,
       container_config TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT,
@@ -105,6 +109,18 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_chat_agent_default
       ON chat_agent_bindings(chat_jid, is_default);
+    CREATE TABLE IF NOT EXISTS chat_threads (
+      id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      title TEXT NOT NULL,
+      workspace_folder TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_threads_chat
+      ON chat_threads(chat_jid, archived, updated_at);
 
     CREATE TABLE IF NOT EXISTS agent_trace_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,7 +154,23 @@ function createSchema(database: Database.Database): void {
 
   try {
     database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN label TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
       `ALTER TABLE registered_groups ADD COLUMN workspace_folder TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN archived INTEGER DEFAULT 0`,
     );
   } catch {
     /* column already exists */
@@ -148,6 +180,28 @@ function createSchema(database: Database.Database): void {
     `UPDATE registered_groups
      SET workspace_folder = folder
      WHERE workspace_folder IS NULL OR workspace_folder = ''`,
+  );
+
+  try {
+    database.exec(
+      `ALTER TABLE agents ADD COLUMN runtime_config TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE messages ADD COLUMN message_type TEXT DEFAULT 'chat'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  database.exec(
+    `UPDATE messages
+     SET message_type = 'chat'
+     WHERE message_type IS NULL OR message_type = ''`,
   );
 
   database.exec(
@@ -161,6 +215,23 @@ function createSchema(database: Database.Database): void {
     `INSERT OR IGNORE INTO chat_agent_bindings (chat_jid, agent_id, is_default, created_at)
      SELECT jid, workspace_folder, 1, added_at
      FROM registered_groups`,
+  );
+
+  database.exec(
+    `INSERT OR IGNORE INTO chat_threads (
+      id, chat_jid, title, workspace_folder, agent_id, created_at, updated_at, archived
+    )
+     SELECT
+       'default-' || hex(randomblob(8)),
+       jid,
+       name,
+       workspace_folder,
+       workspace_folder,
+       added_at,
+       added_at,
+       0
+     FROM registered_groups
+     WHERE jid NOT IN (SELECT chat_jid FROM chat_threads WHERE archived = 0)`,
   );
 
   database.exec(

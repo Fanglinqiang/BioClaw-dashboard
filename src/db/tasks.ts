@@ -7,8 +7,8 @@ export function createTask(
   const db = getDb();
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_id, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_id, prompt, label, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -16,6 +16,7 @@ export function createTask(
     task.chat_jid,
     task.agent_id || task.group_folder,
     task.prompt,
+    task.label || null,
     task.schedule_type,
     task.schedule_value,
     task.context_mode || 'isolated',
@@ -53,7 +54,7 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      'prompt' | 'label' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
     >
   >,
 ): void {
@@ -64,6 +65,10 @@ export function updateTask(
   if (updates.prompt !== undefined) {
     fields.push('prompt = ?');
     values.push(updates.prompt);
+  }
+  if (updates.label !== undefined) {
+    fields.push('label = ?');
+    values.push(updates.label);
   }
   if (updates.schedule_type !== undefined) {
     fields.push('schedule_type = ?');

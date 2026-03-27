@@ -3,9 +3,11 @@
  */
 import { logger } from './logger.js';
 import {
+  archiveChatThread,
   ensureDefaultAgentForWorkspace,
   getAllAgents,
   getAllDefaultChatAgentBindings,
+  getChatThreads,
   getAllRegisteredGroups,
   getAllSessions,
   getRouterState,
@@ -13,8 +15,10 @@ import {
   setRouterState,
   setSession,
   setDefaultChatAgentBinding,
+  upsertAgent,
+  upsertChatThread,
 } from './db/index.js';
-import { AgentDefinition, RegisteredGroup } from './types.js';
+import { AgentDefinition, ChatThreadDefinition, RegisteredGroup } from './types.js';
 import { ensureGroupDir } from './group-folder.js';
 import {
   getWorkspaceChatJids,
@@ -111,6 +115,7 @@ export function loadState(): void {
       setDefaultChatAgentBinding(jid, agentId, group.added_at);
       chatAgentBindings[jid] = agentId;
     }
+    ensureDefaultThreadForChat(jid);
   }
   agents = getAllAgents();
 
@@ -142,6 +147,7 @@ export function registerGroup(jid: string, group: RegisteredGroup): void {
   if (agent) agents[agentId] = agent;
   setDefaultChatAgentBinding(jid, agentId, normalized.added_at);
   chatAgentBindings[jid] = agentId;
+  ensureDefaultThreadForChat(jid);
   logger.info(
     {
       jid,
@@ -154,6 +160,12 @@ export function registerGroup(jid: string, group: RegisteredGroup): void {
   );
 }
 
+export function upsertRegisteredGroupDefinition(jid: string, group: RegisteredGroup): void {
+  const normalized = normalizeRegisteredGroup(group);
+  registeredGroups[jid] = normalized;
+  setRegisteredGroup(jid, normalized);
+}
+
 export function getWorkspaceFolderForChat(chatJid: string): string | undefined {
   const group = registeredGroups[chatJid];
   return group ? getWorkspaceFolder(group) : undefined;
@@ -161,6 +173,188 @@ export function getWorkspaceFolderForChat(chatJid: string): string | undefined {
 
 export function getChatJidsForWorkspace(workspaceFolder: string): string[] {
   return getWorkspaceChatJids(registeredGroups, workspaceFolder);
+}
+
+export function listWorkspaceFolders(): string[] {
+  const folders = new Set<string>();
+  for (const group of Object.values(registeredGroups)) {
+    folders.add(getWorkspaceFolder(group));
+  }
+  for (const agent of Object.values(agents)) {
+    folders.add(agent.workspaceFolder);
+  }
+  return Array.from(folders).sort();
+}
+
+export function ensureDefaultThreadForChat(chatJid: string): ChatThreadDefinition | undefined {
+  const group = registeredGroups[chatJid];
+  const agentId = chatAgentBindings[chatJid];
+  if (!group || !agentId) return undefined;
+
+  const existing = getChatThreads(chatJid);
+  const currentWorkspace = getWorkspaceFolder(group);
+  const current = existing.find((thread) => thread.agentId === agentId && thread.workspaceFolder === currentWorkspace);
+  if (current) return current;
+
+  const createdAt = group.added_at;
+  const thread: ChatThreadDefinition = {
+    id: `default-${Buffer.from(chatJid).toString('base64url').slice(0, 16)}`,
+    chatJid,
+    title: group.name,
+    workspaceFolder: currentWorkspace,
+    agentId,
+    createdAt,
+    updatedAt: createdAt,
+    archived: false,
+  };
+  upsertChatThread(thread);
+  return thread;
+}
+
+export function listThreadsForChat(chatJid: string): ChatThreadDefinition[] {
+  ensureDefaultThreadForChat(chatJid);
+  return getChatThreads(chatJid);
+}
+
+export function getCurrentThreadForChat(chatJid: string): ChatThreadDefinition | undefined {
+  const activeAgentId = getAgentIdForChat(chatJid);
+  const activeWorkspace = getWorkspaceFolderForChat(chatJid);
+  const threads = listThreadsForChat(chatJid);
+  return threads.find((thread) => (
+    thread.agentId === activeAgentId && thread.workspaceFolder === activeWorkspace
+  )) || threads[0];
+}
+
+export function createThreadForChat(chatJid: string, title: string): ChatThreadDefinition | undefined {
+  const group = registeredGroups[chatJid];
+  if (!group) return undefined;
+  const now = new Date().toISOString();
+  const token = Math.random().toString(36).slice(2, 10);
+  const workspaceFolder = `thread-${token}`;
+  ensureGroupDir(workspaceFolder);
+  const agentId = ensureDefaultAgentForWorkspace(workspaceFolder, now);
+  const freshAgent = getAllAgents()[agentId];
+  if (freshAgent) {
+    agents[agentId] = freshAgent;
+  }
+  const thread: ChatThreadDefinition = {
+    id: `thread-${token}`,
+    chatJid,
+    title,
+    workspaceFolder,
+    agentId,
+    createdAt: now,
+    updatedAt: now,
+    archived: false,
+  };
+  upsertChatThread(thread);
+  return thread;
+}
+
+export function renameThreadForChat(
+  chatJid: string,
+  threadId: string,
+  title: string,
+): ChatThreadDefinition | undefined {
+  const thread = listThreadsForChat(chatJid).find((candidate) => candidate.id === threadId);
+  if (!thread) return undefined;
+  const updated = {
+    ...thread,
+    title,
+    updatedAt: new Date().toISOString(),
+  };
+  upsertChatThread(updated);
+  return updated;
+}
+
+export function switchChatToThread(chatJid: string, threadId: string): ChatThreadDefinition | undefined {
+  const thread = listThreadsForChat(chatJid).find((candidate) => candidate.id === threadId);
+  if (!thread) return undefined;
+
+  const binding = bindChatToWorkspace(chatJid, thread.workspaceFolder);
+  if (!binding) return undefined;
+  bindChatToAgent(chatJid, thread.agentId);
+
+  const updated = {
+    ...thread,
+    updatedAt: new Date().toISOString(),
+  };
+  upsertChatThread(updated);
+  return updated;
+}
+
+export function archiveThreadForChat(
+  chatJid: string,
+  threadId: string,
+): { archivedThread: ChatThreadDefinition; switchedTo?: ChatThreadDefinition } | undefined {
+  const threads = listThreadsForChat(chatJid);
+  const target = threads.find((candidate) => candidate.id === threadId);
+  if (!target) return undefined;
+  const activeAgentId = getAgentIdForChat(chatJid);
+  const activeWorkspace = getWorkspaceFolderForChat(chatJid);
+  const wasCurrent = target.agentId === activeAgentId && target.workspaceFolder === activeWorkspace;
+  archiveChatThread(threadId);
+
+  if (!wasCurrent) {
+    return { archivedThread: target };
+  }
+
+  const fallback = threads.find((candidate) => candidate.id !== threadId);
+  if (!fallback) {
+    return { archivedThread: target };
+  }
+  const switchedTo = switchChatToThread(chatJid, fallback.id);
+  return { archivedThread: target, switchedTo };
+}
+
+export function touchCurrentThreadForChat(chatJid: string): ChatThreadDefinition | undefined {
+  const thread = getCurrentThreadForChat(chatJid);
+  if (!thread) return undefined;
+  const updated = {
+    ...thread,
+    updatedAt: new Date().toISOString(),
+  };
+  upsertChatThread(updated);
+  return updated;
+}
+
+export function upsertAgentDefinition(agent: AgentDefinition): void {
+  upsertAgent(agent);
+  agents[agent.id] = agent;
+}
+
+export function bindChatToAgent(chatJid: string, agentId: string): void {
+  const group = registeredGroups[chatJid];
+  const agent = agents[agentId];
+  if (!group || !agent) return;
+
+  setDefaultChatAgentBinding(chatJid, agentId, new Date().toISOString());
+  chatAgentBindings[chatJid] = agentId;
+}
+
+export function bindChatToWorkspace(
+  chatJid: string,
+  workspaceFolder: string,
+): { workspaceFolder: string; agentId: string } | undefined {
+  const group = registeredGroups[chatJid];
+  if (!group) return undefined;
+
+  const updated = normalizeRegisteredGroup({
+    ...group,
+    workspaceFolder,
+  });
+  registeredGroups[chatJid] = updated;
+  setRegisteredGroup(chatJid, updated);
+  ensureGroupDir(workspaceFolder);
+
+  const agentId = ensureDefaultAgentForWorkspace(workspaceFolder, updated.added_at);
+  const freshAgent = getAllAgents()[agentId];
+  if (freshAgent) {
+    agents[agentId] = freshAgent;
+  }
+  bindChatToAgent(chatJid, agentId);
+  ensureDefaultThreadForChat(chatJid);
+  return { workspaceFolder, agentId };
 }
 
 /** @internal - exported for testing */
