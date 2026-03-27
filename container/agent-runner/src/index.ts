@@ -476,6 +476,8 @@ function getBioSystemPrompt(): string {
             ? [`- ... plus ${remainingSkillCount} more installed skill modules.`]
             : []),
           'Do not claim a skill is unavailable if it appears in the installed list above.',
+          'To use a skill, read its full instructions with: read_file({ file_path: "/home/node/.claude/skills/<skill-name>/SKILL.md" })',
+          'Always read the relevant SKILL.md before executing a skill-related task — the summaries above are abbreviated.',
         ]
       : []),
     'For publication-ready figures (Cell/Nature/Science style): use cnsplots (volcano, box, heatmap, etc.). For genome browser tracks: use pyGenomeTracks with make_tracks_file + pyGenomeTracks.',
@@ -1015,6 +1017,55 @@ function getOpenAICompatibleTools() {
         },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'read_file',
+        description: 'Read the contents of a file. Use this to inspect data files, scripts, configuration, skill definitions, and any other text files.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string', description: 'Absolute path to the file to read.' },
+            offset: { type: 'number', description: 'Line number to start reading from (1-based). Optional.' },
+            limit: { type: 'number', description: 'Maximum number of lines to read. Optional, defaults to 2000.' },
+          },
+          required: ['file_path'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'write_file',
+        description: 'Write content to a file. Creates the file if it does not exist, overwrites if it does. Parent directories are created automatically.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string', description: 'Absolute path to the file to write.' },
+            content: { type: 'string', description: 'The full content to write to the file.' },
+          },
+          required: ['file_path', 'content'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'list_files',
+        description: 'List files and directories at a given path. Returns names with trailing / for directories.',
+        parameters: {
+          type: 'object',
+          properties: {
+            directory: { type: 'string', description: 'Absolute path to the directory to list.' },
+            recursive: { type: 'boolean', description: 'If true, list files recursively. Default false.' },
+          },
+          required: ['directory'],
+          additionalProperties: false,
+        },
+      },
+    },
   ] as const;
 }
 
@@ -1092,6 +1143,63 @@ async function executeOpenAIToolCall(
         target_group_jid: args.target_group_jid,
       });
       return `Scheduled task queued (${args.schedule_type}: ${args.schedule_value}).`;
+    case 'read_file': {
+      if (!args.file_path) return 'Missing required argument: file_path';
+      try {
+        if (!fs.existsSync(args.file_path)) return `File not found: ${args.file_path}`;
+        const stat = fs.statSync(args.file_path);
+        if (stat.isDirectory()) return `Path is a directory, not a file: ${args.file_path}`;
+        const content = fs.readFileSync(args.file_path, 'utf-8');
+        const lines = content.split('\n');
+        const offset = Math.max(0, (parseInt(args.offset || '1', 10) || 1) - 1);
+        const limit = parseInt(args.limit || '2000', 10) || 2000;
+        const slice = lines.slice(offset, offset + limit);
+        const numbered = slice.map((line, i) => `${offset + i + 1}\t${line}`).join('\n');
+        const result = numbered || '(empty file)';
+        if (lines.length > offset + limit) {
+          return result + `\n\n... (${lines.length - offset - limit} more lines, use offset/limit to read more)`;
+        }
+        return result;
+      } catch (err) {
+        return `Error reading file: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    case 'write_file': {
+      if (!args.file_path) return 'Missing required argument: file_path';
+      if (args.content === undefined) return 'Missing required argument: content';
+      try {
+        fs.mkdirSync(path.dirname(args.file_path), { recursive: true });
+        fs.writeFileSync(args.file_path, args.content, 'utf-8');
+        return `File written: ${args.file_path} (${Buffer.byteLength(args.content)} bytes)`;
+      } catch (err) {
+        return `Error writing file: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    case 'list_files': {
+      if (!args.directory) return 'Missing required argument: directory';
+      try {
+        if (!fs.existsSync(args.directory)) return `Directory not found: ${args.directory}`;
+        const stat = fs.statSync(args.directory);
+        if (!stat.isDirectory()) return `Path is not a directory: ${args.directory}`;
+        const recursive = args.recursive === 'true';
+        const entries: string[] = [];
+        const walk = (dir: string, prefix: string) => {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+            if (entry.isDirectory()) {
+              entries.push(rel + '/');
+              if (recursive) walk(path.join(dir, entry.name), rel);
+            } else {
+              entries.push(rel);
+            }
+          }
+        };
+        walk(args.directory, '');
+        return entries.length > 0 ? entries.join('\n') : '(empty directory)';
+      } catch (err) {
+        return `Error listing directory: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
     default:
       return `Unknown tool: ${toolName}`;
   }

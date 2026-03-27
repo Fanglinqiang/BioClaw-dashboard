@@ -106,11 +106,17 @@ async function runAgent(prompt: string): Promise<string> {
   const containerName = `bioclaw-cli-${Date.now()}`;
   const args = buildContainerArgs(mounts, containerName);
 
+  const ipcInputDir = path.join(ipcDir, 'input');
+  fs.mkdirSync(ipcInputDir, { recursive: true });
+  // Remove stale close sentinel from previous runs
+  try { fs.unlinkSync(path.join(ipcInputDir, '_close')); } catch { /* ignore */ }
+
   return new Promise((resolve) => {
     const container = spawnContainer(args);
 
     let stdout = '';
     let stderr = '';
+    let outputReceived = false;
 
     container.stdout!.on('data', (data) => {
       const chunk = data.toString();
@@ -127,13 +133,23 @@ async function runAgent(prompt: string): Promise<string> {
         stdout = stdout.slice(endIdx + endMarker.length);
         try {
           const parsed = JSON.parse(jsonStr);
-          if (parsed.result) {
+          if (parsed.error) {
+            console.log(`\n[Error: ${parsed.error}]`);
+          } else if (parsed.result) {
             const text = parsed.result.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
             if (text) {
               console.log(`\n${ASSISTANT_NAME}: ${text}`);
             }
           }
         } catch { /* ignore parse errors */ }
+
+        // Signal the container to exit after receiving output
+        if (!outputReceived) {
+          outputReceived = true;
+          try {
+            fs.writeFileSync(path.join(ipcInputDir, '_close'), '');
+          } catch { /* ignore */ }
+        }
       }
     });
 
