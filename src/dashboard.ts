@@ -28,7 +28,7 @@ import {
   getTokenUsageSummary,
   logTokenUsage,
   updateTask,
-} from './db.js';
+} from './db/index.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -434,8 +434,7 @@ async function handleApi(
     return true;
   }
 
-  // Chat endpoint — streams SSE: text/tool_call/tool_result/session/done/error events
-  if (pathname === '/api/chat' && req.method === 'POST') {
+  if (false && pathname === '/api/chat' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req));
     const { message, sessionId, groupFolder, attachments } = body as {
       message: string;
@@ -478,7 +477,7 @@ async function handleApi(
         const groupDir = path.join(GROUPS_DIR, group.folder);
         fs.mkdirSync(groupDir, { recursive: true });
         const savedFiles: string[] = [];
-        for (const att of attachments) {
+        for (const att of attachments!) {
           if (att.data?.startsWith('data:')) {
             const base64 = att.data.split(',')[1] || '';
             const buf = Buffer.from(base64, 'base64');

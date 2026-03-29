@@ -14,7 +14,7 @@ import {
 } from '../../config.js';
 import { handleDashboardRoutes, initDashboardTraceBroadcast, shutdownDashboardTraceBroadcast } from '../../dashboard/server.js';
 import { getWebVendorScripts } from './vendor-scripts.js';
-import { getRecentMessages, storeChatMetadata, storeMessageDirect } from '../../db/index.js';
+import { getAllRegisteredGroups, getRecentMessages, storeChatMetadata, storeMessageDirect } from '../../db/index.js';
 import { logger } from '../../logger.js';
 import { Channel, OnInboundMessage, OnChatMetadata } from '../../types.js';
 
@@ -95,6 +95,8 @@ export class LocalWebChannel implements Channel {
   private opts: LocalWebChannelOpts;
   /** SSE subscribers for instant UI refresh */
   private readonly sseClients = new Set<ServerResponse>();
+  /** Foreign JIDs initiated from local-web — we claim them so responses route back here */
+  private readonly proxiedJids = new Set<string>();
 
   constructor(opts: LocalWebChannelOpts) {
     this.opts = opts;
@@ -133,7 +135,7 @@ export class LocalWebChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.endsWith('@local.web');
+    return jid.endsWith('@local.web') || this.proxiedJids.has(jid);
   }
 
   async disconnect(): Promise<void> {
@@ -222,6 +224,11 @@ export class LocalWebChannel implements Channel {
 
     if (req.method === 'GET' && url.pathname === '/') {
       this.serveStaticAsset('/assets/index.html', res);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/groups') {
+      sendJson(res, 200, getAllRegisteredGroups());
       return;
     }
 
@@ -350,6 +357,11 @@ export class LocalWebChannel implements Channel {
   ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
+
+    // Register foreign JIDs so sendMessage routes back here
+    if (!chatJid.endsWith('@local.web')) {
+      this.proxiedJids.add(chatJid);
+    }
 
     const now = new Date().toISOString();
     this.opts.onChatMetadata(chatJid, now, 'Local Web Chat');

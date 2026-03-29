@@ -82,7 +82,7 @@ import { WeComChannel } from './channels/wecom.js';
 import { DiscordChannel } from './channels/discord.js';
 import { SlackChannel } from './channels/slack.js';
 import { WeChatChannel } from './channels/wechat.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, NewMessage, RegisteredGroup, StreamingToolCall } from './types.js';
 import { logger } from './logger.js';
 
 
@@ -146,6 +146,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     payload: { messageCount: missedMessages.length, promptLength: prompt.length, preview: prompt.slice(0, 500) },
   });
 
+  const streamStartMs = Date.now();
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -161,10 +162,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let streamSequence = 0;
   let accumulatedText = '';
   let cardCreatePending = false;
+  let streamCardUsed = false; // true once any streaming card was created
+  const activeToolCalls: StreamingToolCall[] = [];
 
   const supportsStreaming = !!(channel?.createStreamingCard);
 
-  // onEvent callback: create/update streaming card as text events arrive
+  const updateCard = () => {
+    if (!streamCardId) return;
+    streamSequence++;
+    channel!.updateStreamingCard!(streamCardId, accumulatedText, streamSequence, activeToolCalls.length ? [...activeToolCalls] : undefined).catch(() => {});
+  };
+
+  // onEvent callback: create/update streaming card as text/tool events arrive
   const onStreamEvent = supportsStreaming ? (event: ContainerEvent) => {
     if (event.type === 'text' && event.text) {
       accumulatedText += (accumulatedText ? '\n\n' : '') + event.text;
@@ -172,13 +181,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const seq = streamSequence;
 
       if (!streamCardId && !cardCreatePending) {
-        // First text event — create the streaming card
         cardCreatePending = true;
         channel!.createStreamingCard!(chatJid).then(cardId => {
           cardCreatePending = false;
           if (cardId) {
             streamCardId = cardId;
-            channel!.updateStreamingCard!(cardId, accumulatedText, seq);
+            streamCardUsed = true;
+            channel!.updateStreamingCard!(cardId, accumulatedText, seq, activeToolCalls.length ? [...activeToolCalls] : undefined);
             outputSentToUser = true;
           }
         }).catch(err => {
@@ -186,25 +195,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           logger.error({ err }, 'Failed to create streaming card');
         });
       } else if (streamCardId) {
-        channel!.updateStreamingCard!(streamCardId, accumulatedText, seq).catch(() => {});
+        channel!.updateStreamingCard!(streamCardId, accumulatedText, seq, activeToolCalls.length ? [...activeToolCalls] : undefined).catch(() => {});
       }
+    } else if (event.type === 'tool_call' && event.id && event.tool) {
+      activeToolCalls.push({ id: event.id, tool: event.tool, status: 'running' });
+      updateCard();
+    } else if (event.type === 'tool_result' && event.id) {
+      const tc = activeToolCalls.find(t => t.id === event.id);
+      if (tc) { tc.status = 'complete'; }
+      updateCard();
     }
   } : undefined;
 
+  let lastResultText = '';
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
 
-      if (text && channel) {
-        if (streamCardId) {
-          // Finalize the streaming card with the final text
-          streamSequence++;
-          const formatted = formatOutbound(channel, text);
-          await channel.finalizeStreamingCard!(streamCardId, formatted || text, streamSequence);
+      if (text) {
+        lastResultText = text;
+        if (streamCardUsed) {
+          // Streaming card handles display — just track the latest result
           outputSentToUser = true;
-        } else {
+        } else if (channel) {
           // No streaming card — send as normal message
           const formatted = formatOutbound(channel, text);
           if (formatted) {
@@ -220,6 +235,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       hadError = true;
     }
   }, onStreamEvent);
+
+  // Finalize streaming card after agent completes (all turns done)
+  if (streamCardId && channel) {
+    streamSequence++;
+    for (const tc of activeToolCalls) { if (tc.status === 'running') tc.status = 'complete'; }
+    const elapsedMs = Date.now() - streamStartMs;
+    const finalText = lastResultText || accumulatedText;
+    const formatted = formatOutbound(channel, finalText);
+    await channel.finalizeStreamingCard!(streamCardId, formatted || finalText, streamSequence, activeToolCalls.length ? [...activeToolCalls] : undefined, elapsedMs);
+    outputSentToUser = true;
+  }
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -266,7 +292,7 @@ async function runAgent(
         if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
           logTokenUsage({
             group_folder: group.folder,
-            agent_type: 'claude',
+            agent_type: group.agentType ?? 'claude',
             input_tokens: output.usage.input_tokens,
             output_tokens: output.usage.output_tokens,
             cache_read_tokens: output.usage.cache_read_tokens,

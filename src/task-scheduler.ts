@@ -176,7 +176,7 @@ async function runTask(
     if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
       logTokenUsage({
         group_folder: task.group_folder,
-        agent_type: 'claude',
+        agent_type: group.agentType ?? 'claude',
         input_tokens: output.usage.input_tokens,
         output_tokens: output.usage.output_tokens,
         cache_read_tokens: output.usage.cache_read_tokens,

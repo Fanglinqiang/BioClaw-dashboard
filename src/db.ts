@@ -3,9 +3,17 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, STORE_DIR } from './config.js';
+import { getDb } from './db/connection.js';
 import { ContainerConfig, NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js';
 
-let db: Database.Database;
+// db is a proxy to the shared instance initialized by db/connection.js
+const db = new Proxy({} as Database.Database, {
+  get(_target, prop) {
+    return (getDb() as any)[prop];
+  },
+});
+
+let _localDb: Database.Database;
 
 function createSchema(database: Database.Database): void {
   database.exec(`
@@ -105,22 +113,10 @@ function createSchema(database: Database.Database): void {
   `);
 }
 
-export function initDatabase(): void {
-  const dbPath = path.join(STORE_DIR, 'messages.db');
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-
-  db = new Database(dbPath);
-  createSchema(db);
-
-  // Migrate from JSON files if they exist
-  migrateJsonState();
-}
-
-/** @internal - for tests only. Creates a fresh in-memory database. */
-export function _initTestDatabase(): void {
-  db = new Database(':memory:');
-  createSchema(db);
-}
+// initDatabase and _initTestDatabase are now in db/connection.ts
+// These stubs exist only for any legacy imports that haven't been updated yet
+export function initDatabase(): void { /* delegated to db/connection.js */ }
+export function _initTestDatabase(): void { /* delegated to db/connection.js */ }
 
 /**
  * Store chat metadata only (no message content).

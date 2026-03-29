@@ -85,6 +85,8 @@ const LANG_KEY = 'bioclaw-web-lang';
         chatTitle: '对话',
         chatHintTpl: 'Enter 发送 · Shift+Enter 换行 · 默认无需 @{name}',
         traceSub: 'Agent 每次运行按思考链分组展示。默认隐藏流式输出片段；勾选下方可显示全部（适合调试）。',
+        chatGroupLabel: '发送至群组',
+        chatGroupDefault: '默认（本地聊天）',
         groupLabel: '群组',
         allGroups: '全部',
         reloadTrace: '刷新',
@@ -151,6 +153,8 @@ const LANG_KEY = 'bioclaw-web-lang';
         lblSession: 'Session ID',
         langToggle: '中文',
         themeToggle: 'Light / dark theme',
+        chatGroupLabel: 'Send to group',
+        chatGroupDefault: 'Default (local chat)',
         chatTitle: 'Chat',
         chatHintTpl: 'Enter to send · Shift+Enter for newline · @{name} optional by default',
         traceSub: 'Each agent run is grouped as a thinking chain. Stream output chunks are hidden by default; enable below for debugging.',
@@ -228,6 +232,7 @@ const LANG_KEY = 'bioclaw-web-lang';
       themeBtn.textContent = t.themeToggle;
       document.getElementById('chatTitle').textContent = t.chatTitle;
       document.getElementById('chatHint').textContent = t.chatHintTpl.replace('{name}', assistantName);
+      document.getElementById('i18n-chat-group-label').textContent = t.chatGroupLabel;
       document.getElementById('traceSub').textContent = t.traceSub;
       document.getElementById('i18n-group-label').textContent = t.groupLabel;
       document.getElementById('opt-all').textContent = t.allGroups;
@@ -899,6 +904,45 @@ const LANG_KEY = 'bioclaw-web-lang';
     });
 
     function setStatus(text) { statusEl.textContent = text || ''; }
+
+    var defaultChatJid = chatJid;
+    var chatGroupSel = document.getElementById('chatGroupSel');
+    var CHAT_GROUP_KEY = 'bioclaw-chat-group-jid';
+
+    function switchChatGroup(jid) {
+      chatJid = jid || defaultChatJid;
+      if (chatEs) { chatEs.close(); chatEs = null; }
+      stopPolling();
+      refreshMessages();
+      connectChatSse();
+    }
+
+    chatGroupSel.addEventListener('change', function () {
+      try { localStorage.setItem(CHAT_GROUP_KEY, chatGroupSel.value); } catch (e) {}
+      switchChatGroup(chatGroupSel.value || defaultChatJid);
+    });
+
+    fetch('/api/groups').then(function (r) { return r.json(); }).then(function (groups) {
+      var t = T();
+      chatGroupSel.innerHTML = '';
+      var defOpt = document.createElement('option');
+      defOpt.value = '';
+      defOpt.textContent = t.chatGroupDefault;
+      chatGroupSel.appendChild(defOpt);
+      Object.keys(groups).forEach(function (jid) {
+        var g = groups[jid];
+        var opt = document.createElement('option');
+        opt.value = jid;
+        opt.textContent = g.name || g.folder || jid;
+        chatGroupSel.appendChild(opt);
+      });
+      var saved = null;
+      try { saved = localStorage.getItem(CHAT_GROUP_KEY); } catch (e) {}
+      if (saved && chatGroupSel.querySelector('option[value="' + saved + '"]')) {
+        chatGroupSel.value = saved;
+        chatJid = saved;
+      }
+    }).catch(function () {});
 
     refreshMessages();
     connectChatSse();

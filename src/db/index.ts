@@ -59,9 +59,13 @@ export {
   type AgentTraceRow,
 } from './traces.js';
 
-// Token usage — exported from legacy db.ts (kept for backward compat)
+// Token usage & stats — exported from legacy db.ts (kept for backward compat)
 export {
   logTokenUsage,
   getTokenUsageByDay,
+  getTokenUsageSummary,
+  getGroupMessageStats,
+  getActivityStats,
+  getTaskRunLogs,
   type TokenUsageDaily,
 } from '../db.js';
