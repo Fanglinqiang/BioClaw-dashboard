@@ -1,8 +1,11 @@
 <div align="center">
+<a href="https://ivegotmagicbean.github.io/BioClaw-Page/">
 <img src="bioclaw_logo.jpg" width="200">
-
+</a>
 
 # BioClaw
+
+<h3>🌐 <a href="https://ivegotmagicbean.github.io/BioClaw-Page/">Visit Project Homepage</a></h3>
 
 ### AI-Powered Bioinformatics Research Assistant on WhatsApp
 
@@ -10,6 +13,7 @@
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/Runchuan-BU/BioClaw)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Runchuan-BU/BioClaw/blob/main/LICENSE)
+[![Homepage](https://img.shields.io/badge/Homepage-BioClaw-blue.svg)](https://ivegotmagicbean.github.io/BioClaw-Page/)
 [![Paper](https://img.shields.io/badge/bioRxiv-STELLA-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.07.01.662467v2)
 [![arXiv](https://img.shields.io/badge/arXiv-2507.02004-b31b1b.svg)](https://arxiv.org/abs/2507.02004)
 
