@@ -109,6 +109,13 @@ interface OpenAIChatResponse {
     message?: OpenAIChatMessage & { content?: string | Array<{ type?: string; text?: string }> | null };
     finish_reason?: string | null;
   }>;
+  usage?: {
+    prompt_tokens?: number;      // OpenAI / most providers
+    completion_tokens?: number;  // OpenAI / most providers
+    input_tokens?: number;       // DashScope (Qwen), Anthropic-style
+    output_tokens?: number;      // DashScope (Qwen), Anthropic-style
+    total_tokens?: number;
+  };
   error?: { message?: string };
 }
 
@@ -1055,7 +1062,7 @@ async function callOpenAICompatibleApi(
     throw new Error('Provider returned no message choices');
   }
 
-  return message;
+  return { message, usage: data.usage };
 }
 
 async function runOpenAICompatibleConversation(
@@ -1082,9 +1089,16 @@ async function runOpenAICompatibleConversation(
       })();
 
   let toolIterations = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  const startMs = Date.now();
+
   while (toolIterations < OPENAI_TOOL_MAX_ITERATIONS) {
     toolIterations += 1;
-    const assistantMessage = await callOpenAICompatibleApi(providerConfig, messages);
+    const { message: assistantMessage, usage } = await callOpenAICompatibleApi(providerConfig, messages);
+
+    totalInputTokens += usage?.prompt_tokens ?? usage?.input_tokens ?? 0;
+    totalOutputTokens += usage?.completion_tokens ?? usage?.output_tokens ?? 0;
 
     messages.push({
       role: 'assistant',
@@ -1094,10 +1108,14 @@ async function runOpenAICompatibleConversation(
 
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
       const textResult = normalizeContent(assistantMessage.content);
+      const usageSummary: TokenUsageSummary | undefined = (totalInputTokens > 0 || totalOutputTokens > 0)
+        ? { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 0, duration_ms: Date.now() - startMs, num_turns: toolIterations }
+        : undefined;
       writeOutput({
         status: 'success',
         result: textResult,
         newSessionId,
+        usage: usageSummary,
       });
       return { newSessionId, closedDuringQuery: false, messages };
     }

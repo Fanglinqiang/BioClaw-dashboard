@@ -8,10 +8,10 @@
       "port": 3847
     },
     {
-      "name": "dashboard",
+      "name": "local-web",
       "runtimeExecutable": "tail",
       "runtimeArgs": ["-f", "/dev/null"],
-      "port": 3847
+      "port": 3000
     }
   ]
 }

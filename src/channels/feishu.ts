@@ -558,16 +558,19 @@ export class FeishuChannel implements Channel {
 
   // --- Streaming card helpers ---
 
-  /** Build tool status lines for card display */
-  private _buildToolStatusText(toolCalls?: StreamingToolCall[]): string {
-    if (!toolCalls?.length) return '';
-    const lines = toolCalls.map(t => {
-      const icon = t.status === 'running' ? '🔄' : t.status === 'complete' ? '✅' : '❌';
-      // Show friendly tool name (strip mcp__bioclaw__ prefix)
-      const name = t.tool.replace(/^mcp__bioclaw__/, '').replace(/_/g, ' ');
-      return `${icon} ${name}`;
-    });
-    return '\n\n---\n' + lines.join('\n');
+  /** Friendly tool name mapping */
+  private static readonly TOOL_NAMES: Record<string, string> = {
+    Bash: '执行命令', Read: '读取文件', Write: '写入文件', Edit: '编辑文件',
+    Grep: '搜索内容', Glob: '查找文件', WebFetch: '访问网页', WebSearch: '搜索网络',
+    bash: '执行命令', send_file: '发送文件',
+  };
+
+  private _friendlyToolName(tool: string): string {
+    if (FeishuChannel.TOOL_NAMES[tool]) return FeishuChannel.TOOL_NAMES[tool];
+    // Strip mcp__ prefixes
+    const stripped = tool.replace(/^mcp__[^_]+__/, '');
+    if (FeishuChannel.TOOL_NAMES[stripped]) return FeishuChannel.TOOL_NAMES[stripped];
+    return stripped.replace(/_/g, ' ');
   }
 
   /** Build card elements array with text + optional tool status */
@@ -581,19 +584,29 @@ export class FeishuChannel implements Channel {
       },
     ];
 
-    // Tool status section
+    // Tool status section — only show running tools + count of completed
     if (toolCalls?.length) {
-      const toolText = toolCalls.map(t => {
-        const icon = t.status === 'running' ? '🔄' : t.status === 'complete' ? '✅' : '❌';
-        const name = t.tool.replace(/^mcp__bioclaw__/, '').replace(/_/g, ' ');
-        return `${icon} ${name}`;
-      }).join('\n');
-      elements.push({
-        tag: 'markdown',
-        content: toolText,
-        element_id: 'tool_status',
-        text_size: 'notation',
-      });
+      const running = toolCalls.filter(t => t.status === 'running');
+      const doneCount = toolCalls.filter(t => t.status === 'complete').length;
+      const parts: string[] = [];
+      if (doneCount > 0 && running.length > 0) {
+        parts.push(`✅ 已完成 ${doneCount} 个工具调用`);
+      }
+      for (const t of running) {
+        parts.push(`🔄 ${this._friendlyToolName(t.tool)}`);
+      }
+      // When all done (finalize), show summary only
+      if (running.length === 0 && doneCount > 0) {
+        parts.push(`✅ 完成 ${doneCount} 个工具调用`);
+      }
+      if (parts.length) {
+        elements.push({
+          tag: 'markdown',
+          content: parts.join('\n'),
+          element_id: 'tool_status',
+          text_size: 'notation',
+        });
+      }
     }
 
     // Elapsed time footer
@@ -679,42 +692,40 @@ export class FeishuChannel implements Channel {
     }
   }
 
-  async updateStreamingCard(cardId: string, text: string, sequence: number): Promise<void> {
+  async updateStreamingCard(cardId: string, text: string, sequence: number, toolCalls?: StreamingToolCall[]): Promise<void> {
     try {
-      await this.client.cardkit.v1.cardElement.content({
-        path: { card_id: cardId, element_id: 'streaming_content' },
-        data: {
-          content: text,
-          sequence,
-        },
-      });
+      if (toolCalls?.length) {
+        // Use full card update to show both text and tool status elements
+        const card = {
+          schema: '2.0',
+          body: { elements: this._buildCardElements(text, toolCalls) },
+          header: { title: { tag: 'plain_text', content: 'Bio' }, template: 'blue' },
+          config: { update_multi: true },
+        };
+        await this.client.cardkit.v1.card.update({
+          path: { card_id: cardId },
+          data: { card: { type: 'card_json', data: JSON.stringify(card) }, sequence },
+        });
+      } else {
+        // Simple text-only update via element content (more efficient)
+        await this.client.cardkit.v1.cardElement.content({
+          path: { card_id: cardId, element_id: 'streaming_content' },
+          data: { content: text, sequence },
+        });
+      }
     } catch (err) {
       logger.error({ err, cardId, sequence }, 'Feishu updateStreamingCard error');
     }
   }
 
-  async finalizeStreamingCard(cardId: string, text: string, sequence: number): Promise<void> {
+  async finalizeStreamingCard(cardId: string, text: string, sequence: number, toolCalls?: StreamingToolCall[], elapsedMs?: number): Promise<void> {
     try {
-      // 1. Final card update with complete content
+      // 1. Final card update with complete content + tool status + elapsed time
       const finalCard = {
         schema: '2.0',
-        body: {
-          elements: [
-            {
-              tag: 'markdown',
-              content: text,
-              element_id: 'streaming_content',
-              text_size: 'normal',
-            },
-          ],
-        },
-        header: {
-          title: { tag: 'plain_text', content: 'Bio' },
-          template: 'blue',
-        },
-        config: {
-          update_multi: true,
-        },
+        body: { elements: this._buildCardElements(text, toolCalls, elapsedMs) },
+        header: { title: { tag: 'plain_text', content: 'Bio' }, template: 'blue' },
+        config: { update_multi: true },
       };
 
       await this.client.cardkit.v1.card.update({
