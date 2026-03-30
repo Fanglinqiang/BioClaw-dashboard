@@ -503,6 +503,8 @@ export class LocalWebChannel implements Channel {
   private server?: http.Server;
   private connected = false;
   private opts: LocalWebChannelOpts;
+  /** Foreign JIDs initiated from local-web — claimed so responses route back here via sendMessage */
+  private readonly proxiedJids = new Set<string>();
 
   constructor(opts: LocalWebChannelOpts) {
     this.opts = opts;
@@ -540,7 +542,7 @@ export class LocalWebChannel implements Channel {
   }
 
   ownsJid(jid: string): boolean {
-    return jid.endsWith('@local.web');
+    return jid.endsWith('@local.web') || this.proxiedJids.has(jid);
   }
 
   async disconnect(): Promise<void> {
@@ -687,6 +689,11 @@ export class LocalWebChannel implements Channel {
   ): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
+
+    // Register foreign JIDs so agent responses route back through local-web
+    if (!chatJid.endsWith('@local.web')) {
+      this.proxiedJids.add(chatJid);
+    }
 
     const now = new Date().toISOString();
     this.opts.onChatMetadata(chatJid, now, 'Local Web Chat');
