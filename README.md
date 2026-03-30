@@ -5,8 +5,6 @@
 
 # BioClaw
 
-<h3>🌐 <a href="https://ivegotmagicbean.github.io/BioClaw-Page/">Visit Project Homepage</a></h3>
-
 ### AI-Powered Bioinformatics Research Assistant
 
 [English](README.md) | [简体中文](README.zh-CN.md)
@@ -17,6 +15,32 @@
 [![Paper](https://img.shields.io/badge/bioRxiv-STELLA-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.07.01.662467v2)
 [![arXiv](https://img.shields.io/badge/arXiv-2507.02004-b31b1b.svg)](https://arxiv.org/abs/2507.02004)
 
+</div>
+
+<br/><br/>
+
+<h2 align="center">💬 Visit Our Homepage & Join WeChat Group</h2>
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://ivegotmagicbean.github.io/BioClaw-Page/">
+        <img src="https://raw.githubusercontent.com/IveGotMagicBean/BioClaw-Page/main/png/EN_Homepage.png" width="650" alt="BioClaw Website"/>
+        <br/><br/>
+        <img src="https://img.shields.io/badge/WeChat-Visit_Homepage_&_Join_Group-07c160?style=for-the-badge&logo=wechat&logoColor=white" height="50" alt="Join WeChat"/>
+      </a>
+      <br/><br/>
+      <h3>👆 Click above to visit our homepage and scan the QR code to join WeChat group!</h3>
+    </td>
+  </tr>
+</table>
+</div>
+
+<br/><br/>
+
+<div align="center">
+
 **BioClaw** brings the power of computational biology directly into WhatsApp group chats. Researchers can run BLAST searches, render protein structures, generate publication-quality plots, perform sequencing QC, and search the literature — all through natural language messages.
 
 Built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) architecture with bioinformatics tools and skills from the [STELLA](https://github.com/zaixizhang/STELLA) project, powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-sdk).
@@ -25,17 +49,6 @@ Built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) architecture with 
   New BioClaw-compatible skills can be developed either directly in BioClaw or in <a href="https://github.com/zongtingwei/Bioclaw_Skills_Hub">Bioclaw_Skills_Hub</a>, which can serve as a staging space for early iteration and testing before useful skills are promoted into the main BioClaw repository. Skills that prove practical and stable may later be integrated into BioClaw itself. To get newly promoted skills and other updates from BioClaw, pull the latest version of this repository with <code>git pull</code>.
 </p>
 </div>
-
-
-## Join WeChat Group
-
-Welcome to join our WeChat group to discuss and exchange ideas! Scan the QR code below to join:
-
-<p align="center">
-  <img src="wechat_group.jpg" width="50%" alt="WeChat Group QR Code"/>
-  <br/>
-  <em>Scan to join the BioClaw community</em>
-</p>
 
 ## Contents
 
