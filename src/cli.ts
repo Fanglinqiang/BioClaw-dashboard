@@ -6,13 +6,14 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
-import { spawn } from 'child_process';
 import {
   ASSISTANT_NAME,
   CONTAINER_IMAGE,
+  CONTAINER_RUNTIME,
   GROUPS_DIR,
   DATA_DIR,
 } from './config.js';
+import { buildContainerArgs, spawnContainer, VolumeMount } from './container-runtime.js';
 import { logger } from './logger.js';
 import { syncContainerSkillsToSession } from './sync-container-skills.js';
 
@@ -94,23 +95,30 @@ async function runAgent(prompt: string): Promise<string> {
     secrets: readSecrets(),
   };
 
-  const args = [
-    'run', '-i', '--rm',
-    '-v', `${groupDir}:/workspace/group`,
-    '-v', `${globalDir}:/workspace/global:ro`,
-    '-v', `${sessionsDir}:/home/node/.claude`,
-    '-v', `${ipcDir}:/workspace/ipc`,
-    '-v', `${agentRunnerSrc}:/app/src:ro`,
-    CONTAINER_IMAGE,
+  const mounts: VolumeMount[] = [
+    { hostPath: groupDir, containerPath: '/workspace/group', readonly: false },
+    { hostPath: globalDir, containerPath: '/workspace/global', readonly: true },
+    { hostPath: sessionsDir, containerPath: '/home/node/.claude', readonly: false },
+    { hostPath: ipcDir, containerPath: '/workspace/ipc', readonly: false },
+    { hostPath: agentRunnerSrc, containerPath: '/app/src', readonly: true },
   ];
 
+  const containerName = `bioclaw-cli-${Date.now()}`;
+  const args = buildContainerArgs(mounts, containerName);
+
+  const ipcInputDir = path.join(ipcDir, 'input');
+  fs.mkdirSync(ipcInputDir, { recursive: true });
+  // Remove stale close sentinel from previous runs
+  try { fs.unlinkSync(path.join(ipcInputDir, '_close')); } catch { /* ignore */ }
+
   return new Promise((resolve) => {
-    const container = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const container = spawnContainer(args);
 
     let stdout = '';
     let stderr = '';
+    let outputReceived = false;
 
-    container.stdout.on('data', (data) => {
+    container.stdout!.on('data', (data) => {
       const chunk = data.toString();
       stdout += chunk;
 
@@ -125,22 +133,32 @@ async function runAgent(prompt: string): Promise<string> {
         stdout = stdout.slice(endIdx + endMarker.length);
         try {
           const parsed = JSON.parse(jsonStr);
-          if (parsed.result) {
+          if (parsed.error) {
+            console.log(`\n[Error: ${parsed.error}]`);
+          } else if (parsed.result) {
             const text = parsed.result.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
             if (text) {
               console.log(`\n${ASSISTANT_NAME}: ${text}`);
             }
           }
         } catch { /* ignore parse errors */ }
+
+        // Signal the container to exit after receiving output
+        if (!outputReceived) {
+          outputReceived = true;
+          try {
+            fs.writeFileSync(path.join(ipcInputDir, '_close'), '');
+          } catch { /* ignore */ }
+        }
       }
     });
 
-    container.stderr.on('data', (data) => {
+    container.stderr!.on('data', (data) => {
       stderr += data.toString();
     });
 
-    container.stdin.write(JSON.stringify(input));
-    container.stdin.end();
+    container.stdin!.write(JSON.stringify(input));
+    container.stdin!.end();
 
     const timeout = setTimeout(() => {
       console.log('\n[Timeout - stopping container]');
@@ -162,7 +180,7 @@ async function main() {
   console.log('');
   console.log('========================================');
   console.log('  BioClaw - Biology Research Assistant');
-  console.log('  CLI Test Mode (Docker + Claude Agent)');
+  console.log(`  CLI Test Mode (${CONTAINER_RUNTIME} + Claude Agent)`);
   console.log('========================================');
   console.log('');
   console.log('Type a biology question or task. Type "exit" to quit.');
@@ -185,7 +203,7 @@ async function main() {
         process.exit(0);
       }
 
-      console.log('\n[Running in Docker container...]');
+      console.log(`\n[Running in ${CONTAINER_RUNTIME} container...]`);
       await runAgent(trimmed);
       console.log('');
       askQuestion();

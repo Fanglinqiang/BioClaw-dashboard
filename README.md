@@ -1,41 +1,64 @@
 <div align="center">
+<a href="https://ivegotmagicbean.github.io/BioClaw-Page/">
 <img src="bioclaw_logo.jpg" width="200">
-
+</a>
 
 # BioClaw
 
-### AI-Powered Bioinformatics Research Assistant on WhatsApp
+### AI-Powered Bioinformatics Research Assistant
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/Runchuan-BU/BioClaw)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Runchuan-BU/BioClaw/blob/main/LICENSE)
+[![Homepage](https://img.shields.io/badge/Homepage-BioClaw-blue.svg)](https://ivegotmagicbean.github.io/BioClaw-Page/)
 [![Paper](https://img.shields.io/badge/bioRxiv-STELLA-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.07.01.662467v2)
 [![arXiv](https://img.shields.io/badge/arXiv-2507.02004-b31b1b.svg)](https://arxiv.org/abs/2507.02004)
+
+</div>
+
+<br/><br/>
+
+<h2 align="center">💬 Visit Our Homepage & Join WeChat Group</h2>
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://ivegotmagicbean.github.io/BioClaw-Page/">
+        <img src="https://raw.githubusercontent.com/IveGotMagicBean/BioClaw-Page/main/png/EN_Homepage.png" width="650" alt="BioClaw Website"/>
+        <br/><br/>
+        <img src="https://img.shields.io/badge/WeChat-Visit_Homepage_&_Join_Group-07c160?style=for-the-badge&logo=wechat&logoColor=white" height="50" alt="Join WeChat"/>
+      </a>
+      <br/><br/>
+      <h3>👆 Click above to visit our homepage and scan the QR code to join WeChat group!</h3>
+    </td>
+  </tr>
+</table>
+</div>
+
+<br/><br/>
+
+<div align="center">
 
 **BioClaw** brings the power of computational biology directly into WhatsApp group chats. Researchers can run BLAST searches, render protein structures, generate publication-quality plots, perform sequencing QC, and search the literature — all through natural language messages.
 
 Built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) architecture with bioinformatics tools and skills from the [STELLA](https://github.com/zaixizhang/STELLA) project, powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents-sdk).
 
-</div>
-
-## Join WeChat Group
-
-Welcome to join our WeChat group to discuss and exchange ideas! Scan the QR code below to join:
-
 <p align="center">
-  <img src="wechat_group.jpg" width="50%" alt="WeChat Group QR Code"/>
-  <br/>
-  <em>Scan to join the BioClaw community</em>
+  New BioClaw-compatible skills can be developed either directly in BioClaw or in <a href="https://github.com/zongtingwei/Bioclaw_Skills_Hub">Bioclaw_Skills_Hub</a>, which can serve as a staging space for early iteration and testing before useful skills are promoted into the main BioClaw repository. Skills that prove practical and stable may later be integrated into BioClaw itself. To get newly promoted skills and other updates from BioClaw, pull the latest version of this repository with <code>git pull</code>.
 </p>
+</div>
 
 ## Contents
 
 - [Overview](#overview)
+- [What's New](#whats-new)
 - [Quick Start](#quick-start)
 - [Messaging channels](#messaging-channels)
 - [Demo Examples](#demo-examples)
 - [System Architecture](#system-architecture)
+- [Skills & Skills Hub](#skills--skills-hub)
 - [Included Tools](#included-tools)
 - [Project Structure](#project-structure)
 - [Citation](#citation)
@@ -52,9 +75,22 @@ The rapid growth of biomedical data, tools, and literature has created a fragmen
 - **Structural Biology** — Fetch and render 3D protein structures from PDB with PyMOL
 - **Data Visualization** — Create volcano plots, heatmaps, and expression figures from CSV data
 - **Literature Search** — Query PubMed for recent papers with structured summaries
+- **Image-based Wet-Lab Interpretation** — Analyze gel/blot photos captured from camera or uploaded in chat (e.g., SDS-PAGE lane quality and target-band checks)
 - **Workspace Management** — Triage files, recommend analysis steps, and manage shared group workspaces
 
 Results — including images, plots, and structured reports — are delivered directly back to the chat.
+
+## What's New
+
+Recent updates make BioClaw feel much closer to a real multi-chat research workspace:
+
+- **Multiple web chats, each with its own memory** — the local web UI now lets you open separate threads like ChatGPT, so one chat can stay on literature search while another focuses on QC or plotting.
+- **A built-in control layer in chat** — you can now manage the current thread directly in chat with commands like `/status`, `/doctor`, `/threads`, `/new`, `/use`, `/rename`, `/archive`, `/workspace`, `/provider`, and `/model`.
+- **Per-thread working directory** — `/dir` lets each thread remember its own default folder inside the workspace, so different chats can work in different subdirectories without stepping on each other.
+- **Reusable shortcuts for recurring workflows** — `/commands` and `/alias` let you save common prompts as short commands, so repeated lab routines do not need to be typed from scratch every time.
+- **Skill visibility and preference control** — `/skills` shows the installed BioClaw skill modules and lets you mark preferred ones for the current thread or agent.
+- **Better local web management** — the browser UI now has a thread list, rename/archive controls, and a lightweight management panel for status and diagnostics.
+- **Quick OpenRouter health check** — `npm run check:openrouter` sends a tiny test request using your current `.env` so you can tell whether the key works before debugging the full app.
 
 ## Quick Start
 
@@ -159,7 +195,44 @@ In any connected chat, simply message:
 
 ## Messaging channels
 
-Supported platforms include **WhatsApp** (default), **Feishu (Lark)**, **WeCom**, **Discord**, **Slack** (Socket Mode), **WeChat Personal** (experimental), and optional **local web** (browser) chat. Full setup steps, env vars, and disabling channels are in **[docs/CHANNELS.md](docs/CHANNELS.md)** (简体中文：[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)).
+Supported platforms include **WhatsApp** (default), **Feishu (Lark)**, **WeCom**, **Discord**, **Slack** (Socket Mode), **WeChat** (fully supported), **QQ** and optional **local web** (browser) chat. Full setup steps, env vars, and disabling channels are in **[docs/CHANNELS.md](docs/CHANNELS.md)** (简体中文：[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)).
+
+
+### WhatsApp Integration Example
+> BioClaw supports WhatsApp group workflows for conversational task requests and in-chat delivery of analysis results.
+
+<img src="ExampleTask/1.jpg" width="300" />
+
+### Feishu (Lark) Integration Example
+> BioClaw also supports Feishu/Lark conversations for interactive task requests and result delivery in chat.
+
+<img src="docs/images/feishu/feishu-bioclaw.jpg" width="300" />
+
+### WeCom Integration Example
+> BioClaw also supports WeCom conversations for team collaboration and in-chat analysis result delivery.
+
+<img src="docs/images/wecom/wecom-bioclaw.jpg" width="300" />
+
+### Discord Integration Example
+> BioClaw supports Discord channel workflows. Screenshot example will be added in a future update.
+
+### Slack (Socket Mode) Integration Example
+> BioClaw supports Slack (Socket Mode) workflows. Screenshot example will be added in a future update.
+
+### WeChat Integration Example
+> BioClaw supports one-click WeChat onboarding and in-chat file handoff workflows (send docs/images, then continue analysis in the same thread).
+
+<img src="docs/images/weixin/weixin-bioclaw.jpg" width="300" />
+
+### QQ Integration Example
+> BioClaw also supports QQ-based conversations for task requests and chat-native result delivery.
+
+<img src="docs/images/qq/qq-deepseek-1.jpg" width="300" />
+
+### Local Web UI (Dashboard) Example
+> The local web channel includes both chat and the built-in dashboard (Lab trace) for timeline observability.
+
+<img src="docs/images/dashboard/UI-bioclaw.jpg" width="1000" />
 
 **Lab trace** (SSE timeline, workspace tree) is built into the local web UI — no extra config needed. See **[docs/DASHBOARD.md](docs/DASHBOARD.md)**.
 
@@ -175,7 +248,7 @@ See the [ExampleTask](ExampleTask/ExampleTask.md) document for 6 ready-to-use de
 
 ## Demo Examples
 
-Below are live demonstrations of BioClaw handling real bioinformatics tasks via WhatsApp.
+Below are live demonstrations of BioClaw handling real bioinformatics tasks across mainstream channels (WhatsApp, QQ, WeCom, WeChat, Feishu/Lark, and local web UI).
 
 ### 1. Workspace Triage & Next Steps
 > Analyze files in a shared workspace and recommend the best next analysis steps.
@@ -245,6 +318,13 @@ Below are live demonstrations of BioClaw handling real bioinformatics tasks via 
 
 ---
 
+### 9. SDS-PAGE Gel Photo Review (WhatsApp Camera/Upload)
+> Capture or upload a gel image in WhatsApp, then ask BioClaw to assess lane quality and whether major bands match expected targets.
+
+<img src="docs/images/whatsapp-凝胶.jpg" width="420" />
+
+---
+
 ## System Architecture
 
 BioClaw is built on the [NanoClaw](https://github.com/qwibitai/nanoclaw) container-based agent architecture, extended with biomedical tools and domain knowledge from the [STELLA](https://github.com/zaixizhang/STELLA) framework.
@@ -284,6 +364,17 @@ WhatsApp ──► Node.js Orchestrator ──► SQLite (state) ──► Docke
 **Biomedical capabilities (attributed to STELLA):**
 
 The bioinformatics tool suite and domain-specific skills — including sequence analysis, structural biology, literature mining, and data visualization — draw from the tool ecosystem developed in the [STELLA](https://github.com/zaixizhang/STELLA) project, a self-evolving multi-agent framework for biomedical research.
+
+## Skills & Skills Hub
+
+BioClaw uses a two-tier skill system:
+
+- **Built-in skills** — ~25 core skills bundled in the container image (BLAST search, differential expression, single-cell preprocessing, database queries, PubMed search, etc.). Always available, no setup needed.
+- **[Skills Hub](https://github.com/zongtingwei/Bioclaw_Skills_Hub)** — A community-maintained repository with 70+ specialized skills across 10 domains (protein design, spatial transcriptomics, EHR analysis, multi-omics integration, etc.).
+
+The agent automatically discovers Hub skills at runtime. When a user's task isn't covered by built-in skills, the agent fetches the relevant skill definition from the Hub via GitHub, caches it locally, and executes it — no manual installation required.
+
+To contribute new skills, see the [Skills Hub contributing guide](https://github.com/zongtingwei/Bioclaw_Skills_Hub/blob/main/CONTRIBUTING.md). Skills that prove stable and widely useful may be promoted into BioClaw's built-in set.
 
 ## Included Tools
 
@@ -331,6 +422,7 @@ All utility scripts are in the `scripts/` directory:
 | `npm run web` | `scripts/start-web.mjs` | Start BioClaw with local web UI (chat + lab trace) |
 | `npm run open:web` | `scripts/open-local-web.mjs` | Open the web UI in default browser |
 | `npm run stop:web` | `scripts/stop-bioclaw-web.mjs` | Stop the web server process |
+| `npm run check:openrouter` | `scripts/check-openrouter.mjs` | Send a minimal test request to OpenRouter using the current `.env` |
 | `bash scripts/clear-local-web.sh` | `scripts/clear-local-web.sh` | Clear all local-web chat history and trace events |
 | `npx tsx scripts/test-cli.ts "prompt"` | `scripts/test-cli.ts` | Run a single prompt through the container agent (CLI test) |
 | `npx tsx scripts/manage-groups.ts list` | `scripts/manage-groups.ts` | Manage WhatsApp group registrations (list / register / remove) |

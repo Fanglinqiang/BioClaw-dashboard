@@ -3,7 +3,7 @@
  * High-level orchestration: input/output parsing, timeouts, lifecycle.
  * Low-level container operations are in container-runtime.ts.
  */
-import { ChildProcess, exec } from 'child_process';
+import { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -19,10 +19,12 @@ import {
   buildVolumeMounts,
   buildContainerArgs,
   spawnContainer,
+  stopContainer,
   makeContainerName,
 } from './container-runtime.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { AgentRuntimeConfig, RegisteredGroup } from './types.js';
+import { getWorkspaceFolder } from './workspace.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---BIOCLAW_OUTPUT_START---';
@@ -34,10 +36,14 @@ export interface ContainerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
+  agentId?: string;
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
-  agentType?: 'claude' | 'minimax' | 'qwen';
+  agentSystemPrompt?: string;
+  agentType?: string;
+  runtimeConfig?: AgentRuntimeConfig;
+  workdir?: string;
   secrets?: Record<string, string>;
 }
 
@@ -68,6 +74,100 @@ export interface ContainerEvent {
   text?: string;
 }
 
+function truncateForUser(text: string, maxChars = 240): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function withSuggestions(summary: string, suggestions: string[]): string {
+  return [
+    summary,
+    '',
+    'Suggested next steps:',
+    ...suggestions.map((item, index) => `${index + 1}. ${item}`),
+  ].join('\n');
+}
+
+function classifyRuntimeError(stderr: string, stdout: string): string | null {
+  const combined = `${stderr}\n${stdout}`;
+
+  const moduleNotFound =
+    combined.match(/ModuleNotFoundError:\s+No module named ['"]([^'"]+)['"]/) ||
+    combined.match(/ImportError:\s+No module named\s+([A-Za-z0-9._-]+)/);
+  if (moduleNotFound) {
+    const pkg = moduleNotFound[1];
+    return withSuggestions(
+      `Missing Python dependency: ${pkg}. This skill likely requires an extra Python package that is not installed in the container image yet.`,
+      [
+        `If this is a one-off local test, try installing ${pkg} in a supported writable Python environment and rerun the skill.`,
+        `If this skill should be stable for everyone, add ${pkg} to the container image / dependency setup instead of relying on runtime installation.`,
+        'If you want, inspect the skill code to confirm which import triggered the failure before changing the image.',
+      ],
+    );
+  }
+
+  const commandNotFound =
+    combined.match(/(?:^|\n)([A-Za-z0-9._+-]+): command not found(?:\n|$)/) ||
+    combined.match(/FileNotFoundError: \[Errno 2\] No such file or directory: ['"]([^'"]+)['"]/) ||
+    combined.match(/\/bin\/sh: 1: ([A-Za-z0-9._+-]+): not found/);
+  if (commandNotFound) {
+    const tool = commandNotFound[1];
+    return withSuggestions(
+      `Missing system tool: ${tool}. This skill is trying to call a command that is not available in the current container.`,
+      [
+        `Add ${tool} to the Docker image / container build so it is available on PATH.`,
+        'Do not rely on ad-hoc runtime installation for production use of system tools unless the environment is explicitly designed for it.',
+        'If this command is optional, consider adding a fallback path inside the skill so users still get a partial answer.',
+      ],
+    );
+  }
+
+  if (/permission denied|operation not permitted|EACCES/i.test(combined)) {
+    return withSuggestions(
+      'Permission error while running this skill. The container likely does not have permission to install packages or modify protected system paths at runtime.',
+      [
+        'Do not try to fix this by repeatedly installing packages interactively inside the running container.',
+        'If this dependency is required, add it during image build instead of runtime.',
+        'If you expected runtime installation to work, check whether the command is writing to a protected system path or requires elevated privileges.',
+      ],
+    );
+  }
+
+  if (/No module named pip|pip: command not found/i.test(combined)) {
+    return withSuggestions(
+      'Package installation failed because pip is unavailable in the runtime environment.',
+      [
+        'Treat this as an environment/image issue rather than a transient skill failure.',
+        'Install pip (or the needed package set) during image build if runtime package installation is part of your workflow.',
+        'If runtime installs are not intended, update the skill instructions so the dependency requirement is explicit.',
+      ],
+    );
+  }
+
+  if (/Temporary failure in name resolution|Could not resolve host|Failed to establish a new connection|Connection timed out|Read timed out|Name or service not known/i.test(combined)) {
+    return withSuggestions(
+      'Network or external API access failed while running this skill.',
+      [
+        'Check container network access, proxy configuration, and DNS resolution.',
+        'If the skill depends on an external API or package registry, verify that service is reachable from inside the container.',
+        'If this environment is intentionally offline, the skill may need an offline fallback or pre-bundled resources.',
+      ],
+    );
+  }
+
+  return null;
+}
+
+function formatUserFacingContainerError(code: number | null, stderr: string, stdout: string): string {
+  const classified = classifyRuntimeError(stderr, stdout);
+  if (classified) return classified;
+
+  const rawTail = truncateForUser(stderr || stdout || 'Unknown container error');
+  const codeLabel = code == null ? 'unknown' : String(code);
+  return `Container exited with code ${codeLabel}. Last error output: ${rawTail}`;
+}
+
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
@@ -76,14 +176,17 @@ export async function runContainerAgent(
   onEvent?: (event: ContainerEvent) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
+  const workspaceFolder = getWorkspaceFolder(group);
+  const agentId = input.agentId || workspaceFolder;
 
-  const mounts = buildVolumeMounts(group, input.isMain);
-  const containerName = makeContainerName(group.folder);
+  const mounts = buildVolumeMounts(group, input.isMain, agentId);
+  const containerName = makeContainerName(agentId);
   const containerArgs = buildContainerArgs(mounts, containerName);
 
   logger.debug(
     {
       group: group.name,
+      agentId,
       containerName,
       mounts: mounts.map(
         (m) =>
@@ -97,6 +200,7 @@ export async function runContainerAgent(
   logger.info(
     {
       group: group.name,
+      agentId,
       containerName,
       mountCount: mounts.length,
       isMain: input.isMain,
@@ -105,18 +209,19 @@ export async function runContainerAgent(
   );
 
   recordAgentTraceEvent({
-    group_folder: group.folder,
+    group_folder: workspaceFolder,
     chat_jid: input.chatJid,
     session_id: input.sessionId ?? null,
     type: 'container_spawn',
     payload: {
       containerName,
+      agentId,
       isMain: input.isMain,
       isScheduledTask: Boolean(input.isScheduledTask),
     },
   });
 
-  const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
+  const logsDir = path.join(GROUPS_DIR, workspaceFolder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
@@ -130,7 +235,27 @@ export async function runContainerAgent(
     let stderrTruncated = false;
 
     // Pass secrets via stdin (never written to disk or mounted as files)
-    input.secrets = readSecrets();
+    const effectiveSecrets = {
+      ...readSecrets(),
+    };
+    if (input.runtimeConfig?.provider) {
+      effectiveSecrets.MODEL_PROVIDER = input.runtimeConfig.provider;
+    }
+    if (input.runtimeConfig?.model) {
+      if (input.runtimeConfig.provider === 'openai-compatible') {
+        effectiveSecrets.OPENAI_COMPATIBLE_MODEL = input.runtimeConfig.model;
+      } else {
+        effectiveSecrets.OPENROUTER_MODEL = input.runtimeConfig.model;
+      }
+    }
+    if (input.runtimeConfig?.baseUrl) {
+      if (input.runtimeConfig.provider === 'openai-compatible') {
+        effectiveSecrets.OPENAI_COMPATIBLE_BASE_URL = input.runtimeConfig.baseUrl;
+      } else {
+        effectiveSecrets.OPENROUTER_BASE_URL = input.runtimeConfig.baseUrl;
+      }
+    }
+    input.secrets = effectiveSecrets;
     container.stdin!.write(JSON.stringify(input));
     container.stdin!.end();
     // Remove secrets from input so they don't appear in logs
@@ -212,8 +337,8 @@ export async function runContainerAgent(
             }
           } catch (err) {
             logger.warn(
-              { group: group.name, error: err },
-              'Failed to parse streamed marker chunk',
+              { group: group.name, workspaceFolder, error: err },
+              'Failed to parse streamed output chunk',
             );
           }
         }
@@ -224,7 +349,7 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (line) logger.debug({ container: workspaceFolder }, line);
       }
       if (stderrTruncated) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
@@ -247,13 +372,8 @@ export async function runContainerAgent(
 
     const killOnTimeout = () => {
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      exec(`docker stop ${containerName}`, { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
-          container.kill('SIGKILL');
-        }
-      });
+      logger.error({ group: group.name, workspaceFolder, containerName }, 'Container timeout, stopping gracefully');
+      stopContainer(containerName, container, 15000);
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
@@ -297,7 +417,7 @@ export async function runContainerAgent(
         }
 
         logger.error(
-          { group: group.name, containerName, duration, code },
+          { group: group.name, workspaceFolder, containerName, duration, code },
           'Container timed out with no output',
         );
 
@@ -370,6 +490,7 @@ export async function runContainerAgent(
         logger.error(
           {
             group: group.name,
+            workspaceFolder,
             code,
             duration,
             stderr,
@@ -382,7 +503,7 @@ export async function runContainerAgent(
         resolve({
           status: 'error',
           result: null,
-          error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
+          error: formatUserFacingContainerError(code, stderr, stdout),
         });
         return;
       }
@@ -391,7 +512,7 @@ export async function runContainerAgent(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId, usage: lastUsage },
+            { group: group.name, workspaceFolder, duration, newSessionId, usage: lastUsage },
             'Container completed (streaming mode)',
           );
           resolve({
@@ -424,6 +545,7 @@ export async function runContainerAgent(
         logger.info(
           {
             group: group.name,
+            workspaceFolder,
             duration,
             status: output.status,
             hasResult: !!output.result,
@@ -436,6 +558,7 @@ export async function runContainerAgent(
         logger.error(
           {
             group: group.name,
+            workspaceFolder,
             stdout,
             stderr,
             error: err,
@@ -453,7 +576,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
+      logger.error({ group: group.name, workspaceFolder, containerName, error: err }, 'Container spawn error');
       resolve({
         status: 'error',
         result: null,

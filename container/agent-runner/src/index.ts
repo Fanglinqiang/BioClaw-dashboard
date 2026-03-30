@@ -26,10 +26,19 @@ interface ContainerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
+  agentId?: string;
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
-  agentType?: 'claude' | 'minimax' | 'qwen';
+  agentSystemPrompt?: string;
+  agentType?: string;
+  workdir?: string;
+  runtimeConfig?: {
+    provider?: 'anthropic' | 'openrouter' | 'openai-compatible';
+    model?: string;
+    baseUrl?: string;
+    enabledSkills?: string[];
+  };
   secrets?: Record<string, string>;
 }
 
@@ -78,10 +87,14 @@ const IPC_TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const IPC_FILES_DIR = path.join(IPC_DIR, 'files');
 const BASH_TIMEOUT_MS = 5 * 60 * 1000;
 const BASH_MAX_OUTPUT_CHARS = 12000;
+const WORKSPACE_GROUP_ROOT = '/workspace/group';
 const OPENAI_TOOL_MAX_ITERATIONS = Math.max(
   1,
   parseInt(process.env.OPENAI_TOOL_MAX_ITERATIONS || '48', 10) || 48,
 );
+const SKILLS_ROOT = '/home/node/.claude/skills';
+const MAX_SKILL_SUMMARY_LINES = 18;
+const MAX_SKILL_DESCRIPTION_CHARS = 140;
 const execAsync = promisify(execChildProcess);
 
 type ProviderKind = 'anthropic' | 'openai-compatible';
@@ -117,6 +130,55 @@ interface OpenAIChatResponse {
     total_tokens?: number;
   };
   error?: { message?: string };
+}
+
+const OPENAI_SESSION_DIR = '/home/node/.claude/openai-compatible-sessions';
+
+function getOpenAICompatibleSessionPath(sessionId: string): string {
+  return path.join(OPENAI_SESSION_DIR, `${encodeURIComponent(sessionId)}.json`);
+}
+
+function loadOpenAICompatibleSessionMessages(
+  sessionId: string,
+): OpenAIChatMessage[] | undefined {
+  const sessionPath = getOpenAICompatibleSessionPath(sessionId);
+  if (!fs.existsSync(sessionPath)) return undefined;
+
+  try {
+    const raw = fs.readFileSync(sessionPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      log(`Ignoring malformed OpenAI-compatible session file: ${sessionPath}`);
+      return undefined;
+    }
+    return parsed as OpenAIChatMessage[];
+  } catch (err) {
+    log(
+      `Failed to load OpenAI-compatible session ${sessionId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return undefined;
+  }
+}
+
+function saveOpenAICompatibleSessionMessages(
+  sessionId: string,
+  messages: OpenAIChatMessage[],
+): void {
+  try {
+    fs.mkdirSync(OPENAI_SESSION_DIR, { recursive: true });
+    const sessionPath = getOpenAICompatibleSessionPath(sessionId);
+    const tempPath = `${sessionPath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2));
+    fs.renameSync(tempPath, sessionPath);
+  } catch (err) {
+    log(
+      `Failed to persist OpenAI-compatible session ${sessionId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 /** Normalize API content (string or array of blocks) to string. */
@@ -209,6 +271,51 @@ function truncateOutput(text: string | undefined | null, maxChars = BASH_MAX_OUT
   return text.length > maxChars ? `${text.slice(0, maxChars)}\n... [truncated]` : text;
 }
 
+function resolveWorkdir(workdir?: string): string {
+  const raw = typeof workdir === 'string' ? workdir.trim() : '';
+  if (!raw || raw === '.' || raw === '/') {
+    return WORKSPACE_GROUP_ROOT;
+  }
+
+  let target = WORKSPACE_GROUP_ROOT;
+  if (raw.startsWith(WORKSPACE_GROUP_ROOT)) {
+    target = path.posix.normalize(raw);
+  } else if (raw.startsWith('/')) {
+    log(`Ignoring invalid workdir outside workspace root: ${raw}`);
+    return WORKSPACE_GROUP_ROOT;
+  } else {
+    target = path.posix.normalize(path.posix.join(WORKSPACE_GROUP_ROOT, raw));
+  }
+
+  const rel = path.posix.relative(WORKSPACE_GROUP_ROOT, target);
+  if (rel.startsWith('..') || path.posix.isAbsolute(rel)) {
+    log(`Ignoring escaping workdir outside workspace root: ${raw}`);
+    return WORKSPACE_GROUP_ROOT;
+  }
+  if (!fs.existsSync(target)) {
+    log(`Configured workdir does not exist, falling back to workspace root: ${target}`);
+    return WORKSPACE_GROUP_ROOT;
+  }
+  try {
+    if (!fs.statSync(target).isDirectory()) {
+      log(`Configured workdir is not a directory, falling back to workspace root: ${target}`);
+      return WORKSPACE_GROUP_ROOT;
+    }
+  } catch (err) {
+    log(`Failed to inspect workdir ${target}, falling back to workspace root: ${err instanceof Error ? err.message : String(err)}`);
+    return WORKSPACE_GROUP_ROOT;
+  }
+  return target;
+}
+
+function buildEnabledSkillsBlock(enabledSkills?: string[]): string {
+  const skills = Array.isArray(enabledSkills)
+    ? enabledSkills.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    : [];
+  if (skills.length === 0) return '';
+  return `\n\n[Preferred skill modules]\nPrefer these installed skills first when they are relevant to the task:\n${skills.map((skill) => `- ${skill}`).join('\n')}\n`;
+}
+
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
   const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
@@ -290,7 +397,7 @@ function resolveProviderConfig(env: Record<string, string | undefined>, agentTyp
       provider: 'openai-compatible',
       apiKey: env.MINIMAX_API_KEY,
       baseUrl: env.MINIMAX_BASE_URL || 'https://api.minimax.chat/v1',
-      model: env.MINIMAX_MODEL || 'MiniMax-M2.5',
+      model: env.MINIMAX_MODEL || 'MiniMax-M2.7',
     };
   }
   if (agentType === 'qwen' && env.QWEN_AUTH_TOKEN && env.QWEN_API_BASE) {
@@ -326,7 +433,87 @@ function resolveProviderConfig(env: Record<string, string | undefined>, agentTyp
   };
 }
 
+interface SkillSummary {
+  name: string;
+  description: string;
+}
+
+function truncateInline(text: string, maxChars: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
+function extractSkillSummary(skillFilePath: string, dirName: string): SkillSummary | null {
+  try {
+    const content = fs.readFileSync(skillFilePath, 'utf-8');
+    const lines = content.split('\n');
+
+    let name = dirName;
+    let description = '';
+
+    if (lines[0]?.trim() === '---') {
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line === '---') break;
+        const nameMatch = line.match(/^name:\s*(.+)$/i);
+        if (nameMatch) {
+          name = nameMatch[1].trim().replace(/^['"]|['"]$/g, '');
+          continue;
+        }
+        const descMatch = line.match(/^description:\s*(.+)$/i);
+        if (descMatch) {
+          description = descMatch[1].trim().replace(/^['"]|['"]$/g, '');
+        }
+      }
+    }
+
+    if (!description) {
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || line === '---' || line.startsWith('#')) continue;
+        if (line.startsWith('name:') || line.startsWith('description:')) continue;
+        description = line;
+        break;
+      }
+    }
+
+    if (!description) return null;
+    return {
+      name,
+      description: truncateInline(description, MAX_SKILL_DESCRIPTION_CHARS),
+    };
+  } catch (err) {
+    log(`Failed to parse skill summary from ${skillFilePath}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+function getInstalledSkillSummaries(): SkillSummary[] {
+  if (!fs.existsSync(SKILLS_ROOT)) return [];
+
+  const summaries: SkillSummary[] = [];
+  for (const entry of fs.readdirSync(SKILLS_ROOT, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.')) continue;
+
+    const skillFilePath = path.join(SKILLS_ROOT, entry.name, 'SKILL.md');
+    if (!fs.existsSync(skillFilePath)) continue;
+
+    const summary = extractSkillSummary(skillFilePath, entry.name);
+    if (summary) summaries.push(summary);
+  }
+
+  return summaries.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function getBioSystemPrompt(): string {
+  const skillSummaries = getInstalledSkillSummaries();
+  const skillLines = skillSummaries
+    .slice(0, MAX_SKILL_SUMMARY_LINES)
+    .map((skill) => `- ${skill.name}: ${skill.description}`);
+  const remainingSkillCount = Math.max(0, skillSummaries.length - skillLines.length);
+
   return [
     '## BioClaw — Biology Research Assistant',
     '',
@@ -354,6 +541,19 @@ function getBioSystemPrompt(): string {
     '- /home/node/.claude/skills/bio-tools/templates/volcano_plot_template.py',
     '- /home/node/.claude/skills/bio-tools/templates/qc_summary_plot_template.py',
     '- /home/node/.claude/skills/bio-tools/templates/pymol_render_template.py',
+    ...(skillLines.length > 0
+      ? [
+          '',
+          'Installed skill modules currently available in this session:',
+          ...skillLines,
+          ...(remainingSkillCount > 0
+            ? [`- ... plus ${remainingSkillCount} more installed skill modules.`]
+            : []),
+          'Do not claim a skill is unavailable if it appears in the installed list above.',
+          'To use a skill, read its full instructions with: read_file({ file_path: "/home/node/.claude/skills/<skill-name>/SKILL.md" })',
+          'Always read the relevant SKILL.md before executing a skill-related task — the summaries above are abbreviated.',
+        ]
+      : []),
     'For publication-ready figures (Cell/Nature/Science style): use cnsplots (volcano, box, heatmap, etc.). For genome browser tracks: use pyGenomeTracks with make_tracks_file + pyGenomeTracks.',
     'Before sending an image, quickly sanity-check that labels are legible, colors are not confusing, and the figure communicates one clear message.',
     'Keep messages concise and action-oriented, and mention important output file paths when relevant.',
@@ -685,6 +885,7 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  const currentWorkdir = resolveWorkdir(containerInput.workdir);
 
   // BioClaw: inject biology-specific system context
   const bioSystemPrompt = getBioSystemPrompt()
@@ -698,7 +899,12 @@ async function runQuery(
   const globalContent = fs.existsSync(globalClaudeMdPath)
     ? fs.readFileSync(globalClaudeMdPath, 'utf-8')
     : '';
-  globalClaudeMd = bioSystemPrompt + globalContent;
+  const agentMemoryBlock = containerInput.agentSystemPrompt
+    ? `\n\n[Agent memory]\n${containerInput.agentSystemPrompt.trim()}\n`
+    : '';
+  const enabledSkillsBlock = buildEnabledSkillsBlock(containerInput.runtimeConfig?.enabledSkills);
+  const workdirBlock = `\n\n[Current working directory]\n${currentWorkdir}\n`;
+  globalClaudeMd = bioSystemPrompt + globalContent + agentMemoryBlock + enabledSkillsBlock + workdirBlock;
 
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
@@ -719,7 +925,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
-      cwd: '/workspace/group',
+      cwd: currentWorkdir,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
@@ -745,6 +951,7 @@ async function runQuery(
           env: {
             BIOCLAW_CHAT_JID: containerInput.chatJid,
             BIOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+            BIOCLAW_AGENT_ID: containerInput.agentId || containerInput.groupFolder,
             BIOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
@@ -944,10 +1151,63 @@ function getOpenAICompatibleTools() {
         },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'read_file',
+        description: 'Read the contents of a file. Use this to inspect data files, scripts, configuration, skill definitions, and any other text files.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string', description: 'Absolute path to the file to read.' },
+            offset: { type: 'number', description: 'Line number to start reading from (1-based). Optional.' },
+            limit: { type: 'number', description: 'Maximum number of lines to read. Optional, defaults to 2000.' },
+          },
+          required: ['file_path'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'write_file',
+        description: 'Write content to a file. Creates the file if it does not exist, overwrites if it does. Parent directories are created automatically.',
+        parameters: {
+          type: 'object',
+          properties: {
+            file_path: { type: 'string', description: 'Absolute path to the file to write.' },
+            content: { type: 'string', description: 'The full content to write to the file.' },
+          },
+          required: ['file_path', 'content'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'list_files',
+        description: 'List files and directories at a given path. Returns names with trailing / for directories.',
+        parameters: {
+          type: 'object',
+          properties: {
+            directory: { type: 'string', description: 'Absolute path to the directory to list.' },
+            recursive: { type: 'boolean', description: 'If true, list files recursively. Default false.' },
+          },
+          required: ['directory'],
+          additionalProperties: false,
+        },
+      },
+    },
   ] as const;
 }
 
-async function runBashTool(command: string, env: Record<string, string | undefined>): Promise<string> {
+async function runBashTool(
+  command: string,
+  env: Record<string, string | undefined>,
+  cwd: string,
+): Promise<string> {
   const safeEnv = { ...env } as Record<string, string | undefined>;
   for (const secretVar of SECRET_ENV_VARS) {
     delete safeEnv[secretVar];
@@ -955,7 +1215,7 @@ async function runBashTool(command: string, env: Record<string, string | undefin
 
   try {
     const { stdout, stderr } = await execAsync(command, {
-      cwd: '/workspace/group',
+      cwd,
       env: Object.fromEntries(
         Object.entries(safeEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
       ),
@@ -983,6 +1243,7 @@ async function executeOpenAIToolCall(
   rawArgs: string,
   containerInput: ContainerInput,
   env: Record<string, string | undefined>,
+  cwd: string,
 ): Promise<string> {
   let args: Record<string, string> = {};
   try {
@@ -994,7 +1255,7 @@ async function executeOpenAIToolCall(
   switch (toolName) {
     case 'bash':
       if (!args.command) return 'Missing required argument: command';
-      return runBashTool(args.command, env);
+      return runBashTool(args.command, env, cwd);
     case 'send_message':
       if (!args.text) return 'Missing required argument: text';
       queueIpcMessage(containerInput.chatJid, containerInput.groupFolder, args.text);
@@ -1021,6 +1282,63 @@ async function executeOpenAIToolCall(
         target_group_jid: args.target_group_jid,
       });
       return `Scheduled task queued (${args.schedule_type}: ${args.schedule_value}).`;
+    case 'read_file': {
+      if (!args.file_path) return 'Missing required argument: file_path';
+      try {
+        if (!fs.existsSync(args.file_path)) return `File not found: ${args.file_path}`;
+        const stat = fs.statSync(args.file_path);
+        if (stat.isDirectory()) return `Path is a directory, not a file: ${args.file_path}`;
+        const content = fs.readFileSync(args.file_path, 'utf-8');
+        const lines = content.split('\n');
+        const offset = Math.max(0, (parseInt(args.offset || '1', 10) || 1) - 1);
+        const limit = parseInt(args.limit || '2000', 10) || 2000;
+        const slice = lines.slice(offset, offset + limit);
+        const numbered = slice.map((line, i) => `${offset + i + 1}\t${line}`).join('\n');
+        const result = numbered || '(empty file)';
+        if (lines.length > offset + limit) {
+          return result + `\n\n... (${lines.length - offset - limit} more lines, use offset/limit to read more)`;
+        }
+        return result;
+      } catch (err) {
+        return `Error reading file: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    case 'write_file': {
+      if (!args.file_path) return 'Missing required argument: file_path';
+      if (args.content === undefined) return 'Missing required argument: content';
+      try {
+        fs.mkdirSync(path.dirname(args.file_path), { recursive: true });
+        fs.writeFileSync(args.file_path, args.content, 'utf-8');
+        return `File written: ${args.file_path} (${Buffer.byteLength(args.content)} bytes)`;
+      } catch (err) {
+        return `Error writing file: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    case 'list_files': {
+      if (!args.directory) return 'Missing required argument: directory';
+      try {
+        if (!fs.existsSync(args.directory)) return `Directory not found: ${args.directory}`;
+        const stat = fs.statSync(args.directory);
+        if (!stat.isDirectory()) return `Path is not a directory: ${args.directory}`;
+        const recursive = args.recursive === 'true';
+        const entries: string[] = [];
+        const walk = (dir: string, prefix: string) => {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+            if (entry.isDirectory()) {
+              entries.push(rel + '/');
+              if (recursive) walk(path.join(dir, entry.name), rel);
+            } else {
+              entries.push(rel);
+            }
+          }
+        };
+        walk(args.directory, '');
+        return entries.length > 0 ? entries.join('\n') : '(empty directory)';
+      } catch (err) {
+        return `Error listing directory: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
     default:
       return `Unknown tool: ${toolName}`;
   }
@@ -1070,23 +1388,32 @@ async function runOpenAICompatibleConversation(
   sessionId: string | undefined,
   containerInput: ContainerInput,
   env: Record<string, string | undefined>,
+  cwd: string,
   providerConfig: ProviderConfig,
   existingMessages?: OpenAIChatMessage[],
 ): Promise<{ newSessionId: string; closedDuringQuery: boolean; messages: OpenAIChatMessage[] }> {
   const newSessionId = sessionId || `openai-compatible:${randomUUID()}`;
-  const messages: OpenAIChatMessage[] = existingMessages
-    ? [...existingMessages, { role: 'user', content: prompt }]
+  const persistedMessages = existingMessages || loadOpenAICompatibleSessionMessages(newSessionId);
+  const messages: OpenAIChatMessage[] = persistedMessages
+    ? [...persistedMessages, { role: 'user', content: prompt }]
     : (() => {
         const bioSystemPrompt = getBioSystemPrompt();
         const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
         const globalContent = fs.existsSync(globalClaudeMdPath)
           ? fs.readFileSync(globalClaudeMdPath, 'utf-8')
           : '';
+        const agentMemoryBlock = containerInput.agentSystemPrompt
+          ? `\n\n[Agent memory]\n${containerInput.agentSystemPrompt.trim()}\n`
+          : '';
+        const enabledSkillsBlock = buildEnabledSkillsBlock(containerInput.runtimeConfig?.enabledSkills);
+        const workdirBlock = `\n\n[Current working directory]\n${cwd}\n`;
+        const modelIdentityBlock = `\n\n[Model identity]\nYou are powered by ${providerConfig.model}. When asked who you are or what model you are, answer truthfully with this model name. You are NOT Claude, ChatGPT, or any other model.\n`;
         return [
-          { role: 'system', content: bioSystemPrompt + globalContent },
+          { role: 'system', content: bioSystemPrompt + modelIdentityBlock + globalContent + agentMemoryBlock + enabledSkillsBlock + workdirBlock },
           { role: 'user', content: prompt },
         ];
       })();
+  saveOpenAICompatibleSessionMessages(newSessionId, messages);
 
   let toolIterations = 0;
   let totalInputTokens = 0;
@@ -1105,6 +1432,7 @@ async function runOpenAICompatibleConversation(
       content: normalizeContent(assistantMessage.content),
       tool_calls: assistantMessage.tool_calls,
     });
+    saveOpenAICompatibleSessionMessages(newSessionId, messages);
 
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
       const textResult = normalizeContent(assistantMessage.content);
@@ -1126,6 +1454,7 @@ async function runOpenAICompatibleConversation(
         toolCall.function.arguments,
         containerInput,
         env,
+        cwd,
       );
 
       messages.push({
@@ -1133,6 +1462,7 @@ async function runOpenAICompatibleConversation(
         tool_call_id: toolCall.id,
         content: toolResult,
       });
+      saveOpenAICompatibleSessionMessages(newSessionId, messages);
     }
   }
 
@@ -1164,7 +1494,9 @@ async function main(): Promise<void> {
     sdkEnv[key] = value;
   }
   const providerConfig = resolveProviderConfig(sdkEnv, containerInput.agentType);
-  log(`Using provider: ${providerConfig.provider}${providerConfig.model ? ` (${providerConfig.model})` : ''} (agentType: ${containerInput.agentType || 'claude'})`);
+  const currentWorkdir = resolveWorkdir(containerInput.workdir);
+  log(`Using provider: ${providerConfig.provider}${providerConfig.model ? ` (${providerConfig.model})` : ''}`);
+  log(`Using workdir: ${currentWorkdir}`);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
@@ -1212,6 +1544,7 @@ async function main(): Promise<void> {
           sessionId,
           containerInput,
           sdkEnv,
+          currentWorkdir,
           providerConfig,
           openAiMessages,
         );

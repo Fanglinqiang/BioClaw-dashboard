@@ -1,5 +1,7 @@
 <div align="center">
+<a href="https://ivegotmagicbean.github.io/BioClaw-Page/">
 <img src="bioclaw_logo.jpg" width="200">
+</a>
 
 # BioClaw
 
@@ -9,20 +11,50 @@
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/Runchuan-BU/BioClaw)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/Runchuan-BU/BioClaw/blob/main/LICENSE)
+[![Homepage](https://img.shields.io/badge/Homepage-BioClaw-blue.svg)](https://ivegotmagicbean.github.io/BioClaw-Page/zh.html)
 [![Paper](https://img.shields.io/badge/bioRxiv-STELLA-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.07.01.662467v2)
 [![arXiv](https://img.shields.io/badge/arXiv-2507.02004-b31b1b.svg)](https://arxiv.org/abs/2507.02004)
 
 </div>
 
----
+<br/><br/>
+
+<h2 align="center">💬 访问官网 & 加入微信群</h2>
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://ivegotmagicbean.github.io/BioClaw-Page/zh.html">
+        <img src="https://raw.githubusercontent.com/IveGotMagicBean/BioClaw-Page/main/png/CN_Homepage.png" width="650" alt="BioClaw 官网"/>
+        <br/><br/>
+        <img src="https://img.shields.io/badge/微信-访问主页_·_扫码入群-07c160?style=for-the-badge&logo=wechat&logoColor=white" height="50" alt="加入微信群"/>
+      </a>
+      <br/><br/>
+      <h3>👆 点击上方图片，访问官网扫码加入微信群！</h3>
+    </td>
+  </tr>
+</table>
+</div>
+
+<br/><br/>
+
+<div align="center">
+
+<p align="center">
+  新的 BioClaw 兼容 skills 可以直接在 BioClaw 中开发，也可以先提交到 <a href="https://github.com/zongtingwei/Bioclaw_Skills_Hub">Bioclaw_Skills_Hub</a> 作为前期迭代和测试的空间，再根据实际效果同步到主 BioClaw 仓库中。经过验证、效果稳定的 skills，后续可以逐步整合进 BioClaw。若想获取这些后续合入的 skills 和更新内容，请在本仓库中执行 <code>git pull</code>。
+</p>
+</div>
 
 ## 目录
 
 - [概览](#概览)
+- [这版新增了什么](#这版新增了什么)
 - [快速开始](#快速开始)
 - [消息通道](#消息通道)
 - [示例演示](#示例演示)
 - [系统架构](#系统架构)
+- [Skills 与 Skills Hub](#skills-与-skills-hub)
 - [内置工具](#内置工具)
 - [项目结构](#项目结构)
 - [引用](#引用)
@@ -37,8 +69,21 @@ BioClaw 将常见的生物信息学任务带到聊天界面中。研究者可以
 - 测序数据质控（FastQC / MultiQC）
 - 差异分析可视化（火山图等）
 - 文献检索与摘要
+- 基于图片的湿实验结果解读（支持 WhatsApp 拍照或上传图片，如 SDS-PAGE 条带质量与目标条带匹配判断）
 
-默认通道为 WhatsApp；飞书、企业微信、Discord、Slack、本地网页等配置见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**。飞书的完整配置、OpenRouter 设置、群聊限制与排障见 **[docs/FEISHU_SETUP.zh-CN.md](docs/FEISHU_SETUP.zh-CN.md)**。QQ 相关截图仍为路线图示意，详见该文档。
+默认通道为 WhatsApp；飞书、企业微信、Discord、Slack、微信（已全面支持）、本地网页等配置见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**。飞书的完整配置、OpenRouter 设置、群聊限制与排障见 **[docs/FEISHU_SETUP.zh-CN.md](docs/FEISHU_SETUP.zh-CN.md)**。QQ 相关截图仍为路线图示意，详见该文档。
+
+## 这版新增了什么
+
+最近这版更新，BioClaw 用起来更像一个真正可管理的研究工作台了：
+
+- **Web 端支持多个独立对话**：现在本地网页可以像 ChatGPT 一样开多个 chat，每个 thread 都有自己独立的记忆，不会互相串话。
+- **聊天里就能直接管理系统**：现在可以直接在聊天中用 `/status`、`/doctor`、`/threads`、`/new`、`/use`、`/rename`、`/archive`、`/workspace`、`/provider`、`/model` 这些命令，不用总靠改配置文件。
+- **每个 thread 都能记住自己的工作目录**：通过 `/dir`，不同 thread 可以固定在不同子目录里工作，做质控、画图、查文献时不容易互相打架。
+- **常用流程可以存成短命令**：用 `/commands` 和 `/alias` 可以把常见分析流程存成自己的快捷命令，后面直接一句话调出来。
+- **可以看到并选择偏好的 skills**：现在 `/skills` 能列出当前内置技能，还能给当前 thread 或 agent 标记偏好的 skill。
+- **本地网页更好用了**：现在 web 里有 thread 列表、重命名/归档按钮，还有一个轻量管理面板，可以直接看状态和做基本排查。
+- **OpenRouter 可以先做健康检查**：新增 `npm run check:openrouter`，会用当前 `.env` 发一个最小请求，先确认 key 能不能真正调模型。
 
 ## 快速开始
 
@@ -129,6 +174,53 @@ npm run dev
 
 各平台逐步配置、环境变量、本地网页与 **Windows（WSL2）** 说明见 **[docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)**；其中 Windows 细节补充在 **[docs/WINDOWS.zh-CN.md](docs/WINDOWS.zh-CN.md)**。需要**本地浏览器（对话与实验追踪同一页）**时，在项目根目录执行 **`npm run web`** 即可（仍会读取 `.env`）。
 
+目前已支持 WhatsApp、飞书、企业微信、Discord、Slack、微信（已全面支持）、QQ、本地网页通道 等渠道。
+
+
+### WhatsApp 接入示例
+
+BioClaw 支持在 WhatsApp 群聊中进行对话式任务请求，并在群内返回分析结果。
+
+<img src="ExampleTask/1.jpg" width="300" />
+
+### 飞书接入示例
+
+BioClaw 同样支持在飞书/Lark 中对话式发起任务，并在会话内接收分析结果与反馈。
+
+<img src="docs/images/feishu/feishu-bioclaw.jpg" width="300" />
+
+### 企业微信接入示例
+
+BioClaw 也支持在企业微信中进行团队对话式任务请求，并在聊天内返回分析结果。
+
+<img src="docs/images/wecom/wecom-bioclaw.jpg" width="300" />
+
+### Discord 接入示例
+
+BioClaw 支持 Discord 渠道对话流程。截图示例将在后续版本补充。
+
+### Slack（Socket Mode）接入示例
+
+BioClaw 支持 Slack（Socket Mode）渠道流程。截图示例将在后续版本补充。
+
+### 微信接入示例
+
+BioClaw 支持微信一键接入，并可在会话内进行文件传递与后续分析联动（发送文档/图片后继续在同一线程分析）。
+
+<img src="docs/images/weixin/weixin-bioclaw.jpg" width="300" />
+
+### QQ 接入示例
+
+BioClaw 也支持在 QQ 中进行对话式任务请求，并在聊天内返回分析结果。
+
+<img src="docs/images/qq/qq-deepseek-1.jpg" width="300" />
+
+### 本地 Web UI（Dashboard）示例
+
+本地网页通道同时包含聊天界面与内置的 dashboard（Lab trace）运行观测视图。
+
+<img src="docs/images/dashboard/UI-bioclaw.jpg" width="1000" />
+
 英文版通道文档：[docs/CHANNELS.md](docs/CHANNELS.md)。
 
 **Lab trace 观测**（SSE 时间线、工作区树）已内置于本地网页界面，无需额外配置。说明见 [docs/DASHBOARD.md](docs/DASHBOARD.md)。
@@ -143,7 +235,15 @@ install https://github.com/Runchuan-BU/BioClaw
 
 ## 示例演示
 
-QQ / 飞书路线图示意截图已移至 [docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)。任务类演示见 [ExampleTask/ExampleTask.md](ExampleTask/ExampleTask.md)。
+以下演示展示了 BioClaw 在主流渠道中的任务能力（WhatsApp、QQ、企业微信、微信、飞书以及本地 Web UI）。
+
+QQ / 飞书路线图示意截图已移至 [docs/CHANNELS.zh-CN.md](docs/CHANNELS.zh-CN.md)。更多任务类演示见 [ExampleTask/ExampleTask.md](ExampleTask/ExampleTask.md)。
+
+### 9. SDS-PAGE 凝胶图审阅（WhatsApp 拍照/上传）
+
+在 WhatsApp 中直接拍照或上传凝胶图片，请 BioClaw 判断泳道质量、条带是否清晰，以及主条带是否与目标分子量大致匹配。
+
+<img src="docs/images/whatsapp-凝胶.jpg" width="420" />
 
 ## 系统架构
 
@@ -152,6 +252,17 @@ BioClaw 基于 NanoClaw 的容器化架构，并融合 STELLA 的生物医学能
 ```
 聊天平台 -> Node.js 编排器 -> SQLite 状态 -> Docker 容器 -> Agent + 生物工具
 ```
+
+## Skills 与 Skills Hub
+
+BioClaw 采用两层 skill 体系：
+
+- **内置 skills** — 约 25 个核心技能，随容器镜像打包（BLAST 搜索、差异表达、单细胞预处理、数据库查询、PubMed 文献检索等），开箱即用。
+- **[Skills Hub](https://github.com/zongtingwei/Bioclaw_Skills_Hub)** — 社区维护的技能仓库，涵盖 10 个领域 70+ 专业技能（蛋白质设计、空间转录组、EHR 分析、多组学整合等）。
+
+Agent 会在运行时自动发现 Hub 中的技能。当用户的任务超出内置 skills 范围时，Agent 会从 GitHub 拉取对应的 skill 定义，缓存到本地后执行——无需手动安装。
+
+如需贡献新技能，请参考 [Skills Hub 贡献指南](https://github.com/zongtingwei/Bioclaw_Skills_Hub/blob/main/CONTRIBUTING.md)。经验证稳定且常用的 skills 会逐步整合进 BioClaw 内置集。
 
 ## 内置工具
 
@@ -194,6 +305,7 @@ BioClaw 基于 NanoClaw 的容器化架构，并融合 STELLA 的生物医学能
 | `npm run web` | `scripts/start-web.mjs` | 启动 BioClaw 本地 Web 界面（聊天 + 实验追踪） |
 | `npm run open:web` | `scripts/open-local-web.mjs` | 用默认浏览器打开 Web 界面 |
 | `npm run stop:web` | `scripts/stop-bioclaw-web.mjs` | 停止 Web 服务进程 |
+| `npm run check:openrouter` | `scripts/check-openrouter.mjs` | 用当前 `.env` 对 OpenRouter 发一个最小测试请求 |
 | `bash scripts/clear-local-web.sh` | `scripts/clear-local-web.sh` | 清空本地 Web 聊天记录和追踪事件 |
 | `npx tsx scripts/test-cli.ts "prompt"` | `scripts/test-cli.ts` | 单次 CLI 测试：发送一个 prompt 到容器 |
 | `npx tsx scripts/manage-groups.ts list` | `scripts/manage-groups.ts` | 管理 WhatsApp 群组注册（list / register / remove） |

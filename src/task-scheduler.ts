@@ -24,12 +24,19 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
+import { getRuntimeGroupForWorkspace } from './workspace.js';
 
 export interface SchedulerDependencies {
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
+  getAgentWorkspaceFolder: (agentId: string) => string | undefined;
   queue: GroupQueue;
-  onProcess: (groupJid: string, proc: ChildProcess, containerName: string, groupFolder: string) => void;
+  onProcess: (
+    agentId: string,
+    proc: ChildProcess,
+    containerName: string,
+    ipcFolder: string,
+  ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
 }
 
@@ -38,24 +45,29 @@ async function runTask(
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
-  const groupDir = path.join(GROUPS_DIR, task.group_folder);
+  const agentId = task.agent_id || task.group_folder;
+  const workspaceFolder =
+    deps.getAgentWorkspaceFolder(agentId) || task.group_folder;
+  const groupDir = path.join(GROUPS_DIR, workspaceFolder);
   fs.mkdirSync(groupDir, { recursive: true });
 
   logger.info(
-    { taskId: task.id, group: task.group_folder },
+    { taskId: task.id, agentId, workspaceFolder },
     'Running scheduled task',
   );
 
   // next_run was already advanced by the scheduler loop before enqueuing.
 
   const groups = deps.registeredGroups();
-  const group = Object.values(groups).find(
-    (g) => g.folder === task.group_folder,
+  const group = getRuntimeGroupForWorkspace(
+    groups,
+    workspaceFolder,
+    task.chat_jid,
   );
 
   if (!group) {
     logger.error(
-      { taskId: task.id, groupFolder: task.group_folder },
+      { taskId: task.id, groupFolder: workspaceFolder, agentId },
       'Group not found for task',
     );
     logTaskRun({
@@ -70,14 +82,14 @@ async function runTask(
   }
 
   // Update tasks snapshot for container to read (filtered by group)
-  const isMain = task.group_folder === MAIN_GROUP_FOLDER;
+  const isMain = workspaceFolder === MAIN_GROUP_FOLDER;
   const tasks = getAllTasks();
   writeTasksSnapshot(
-    task.group_folder,
+    agentId,
     isMain,
     tasks.map((t) => ({
       id: t.id,
-      groupFolder: t.group_folder,
+      groupFolder: t.agent_id || t.group_folder,
       prompt: t.prompt,
       schedule_type: t.schedule_type,
       schedule_value: t.schedule_value,
@@ -92,7 +104,7 @@ async function runTask(
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
   const sessionId =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
+    task.context_mode === 'group' ? sessions[agentId] : undefined;
 
   // Idle timer: writes _close sentinel after IDLE_TIMEOUT of no output,
   // so the container exits instead of hanging at waitForIpcMessage forever.
@@ -102,13 +114,13 @@ async function runTask(
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       logger.debug({ taskId: task.id }, 'Scheduled task idle timeout, closing container stdin');
-      deps.queue.closeStdin(task.chat_jid);
+      deps.queue.closeStdin(agentId);
     }, IDLE_TIMEOUT);
   };
 
   try {
     recordAgentTraceEvent({
-      group_folder: task.group_folder,
+      group_folder: workspaceFolder,
       chat_jid: task.chat_jid,
       session_id: sessionId ?? null,
       type: 'scheduled_run_start',
@@ -123,13 +135,15 @@ async function runTask(
       {
         prompt: task.prompt,
         sessionId,
-        groupFolder: task.group_folder,
+        groupFolder: workspaceFolder,
+        agentId,
         chatJid: task.chat_jid,
         isMain,
         isScheduledTask: true,
         agentType: group.agentType,
       },
-      (proc, containerName) => deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),
+      (proc, containerName) =>
+        deps.onProcess(agentId, proc, containerName, agentId),
       async (streamedOutput: ContainerOutput) => {
         const r =
           streamedOutput.result == null
@@ -138,7 +152,7 @@ async function runTask(
               ? streamedOutput.result
               : JSON.stringify(streamedOutput.result);
         recordAgentTraceEvent({
-          group_folder: task.group_folder,
+          group_folder: workspaceFolder,
           chat_jid: task.chat_jid,
           session_id: sessionId ?? null,
           type: 'stream_output',
@@ -190,7 +204,7 @@ async function runTask(
     }
 
     recordAgentTraceEvent({
-      group_folder: task.group_folder,
+      group_folder: workspaceFolder,
       chat_jid: task.chat_jid,
       session_id: sessionId ?? null,
       type: 'scheduled_run_end',
@@ -209,7 +223,7 @@ async function runTask(
     if (idleTimer) clearTimeout(idleTimer);
     error = err instanceof Error ? err.message : String(err);
     recordAgentTraceEvent({
-      group_folder: task.group_folder,
+      group_folder: workspaceFolder,
       chat_jid: task.chat_jid,
       session_id: sessionId ?? null,
       type: 'scheduled_run_error',
@@ -290,7 +304,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         }
 
         deps.queue.enqueueTask(
-          currentTask.chat_jid,
+          currentTask.agent_id || currentTask.group_folder,
           currentTask.id,
           () => runTask(currentTask, deps),
         );

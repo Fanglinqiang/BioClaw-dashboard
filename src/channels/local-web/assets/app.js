@@ -10,6 +10,8 @@
   var assistantName = cfg.assistantName || 'Bioclaw';
   var AUTH_TOKEN = cfg.authToken || '';
   var STREAM_QS = cfg.streamQs || '';
+  var THREAD_KEY = 'bioclaw-web-thread-jid';
+  var threads = [];
 
   // Set session JID in settings drawer
   var jidEl = document.getElementById('sessionJid');
@@ -22,6 +24,8 @@ const LANG_KEY = 'bioclaw-web-lang';
     const tabChatBtn = document.getElementById('tabChatBtn');
     const panelTrace = document.getElementById('panelTrace');
     const panelChat = document.getElementById('panelChat');
+    const threadListEl = document.getElementById('threadList');
+    const newThreadBtn = document.getElementById('newThreadBtn');
     const messagesEl = document.getElementById('messages');
     const form = document.getElementById('composer');
     const input = document.getElementById('text');
@@ -43,6 +47,12 @@ const LANG_KEY = 'bioclaw-web-lang';
     const closeSettingsBtn = document.getElementById('closeSettings');
     const settingsConnValue = document.getElementById('settingsConnValue');
     const settingsTraceConnValue = document.getElementById('settingsTraceConnValue');
+    const manageRefreshBtn = document.getElementById('manageRefreshBtn');
+    const manageCommandInput = document.getElementById('manageCommandInput');
+    const manageCommandBtn = document.getElementById('manageCommandBtn');
+    const manageCommandOutput = document.getElementById('manageCommandOutput');
+    const manageStatusPanel = document.getElementById('manageStatusPanel');
+    const manageDoctorPanel = document.getElementById('manageDoctorPanel');
 
     const timeline = document.getElementById('timeline');
     const groupSel = document.getElementById('group');
@@ -73,15 +83,39 @@ const LANG_KEY = 'bioclaw-web-lang';
         settingsTitle: '设置',
         settingsAria: '打开设置',
         closeSettingsAria: '关闭',
+        threadsTitle: '对话',
+        threadsHint: '每个对话独立保存记忆与历史。',
+        newThread: '新对话',
+        newThreadPrompt: '输入新对话标题（可留空）',
+        threadUntitled: '新对话',
+        threadEmpty: '还没有其他对话。点击右上角创建一个新的独立线程。',
         secDisplay: '显示',
         secConnection: '连接',
+        secControl: '控制台',
         lblLang: '界面语言',
         lblTheme: '外观',
         lblConn: '对话列表',
         lblTraceConn: '追踪列表',
         lblSession: '会话 ID',
+        lblControlCommand: '控制命令',
+        lblStatusPanel: '状态',
+        lblDoctorPanel: '诊断',
         langToggle: 'English',
         themeToggle: '切换浅色 / 深色',
+        manageRefresh: '刷新',
+        manageRunCommand: '执行',
+        manageCommandPlaceholder: '例如：/status 或 /workspace list',
+        manageEmpty: '暂无数据。',
+        manageLoading: '加载中…',
+        manageCommandError: '命令执行失败',
+        manageFetchError: '加载失败',
+        threadCreateFail: '创建对话失败',
+        threadRenamePrompt: '输入新的对话标题',
+        threadRenameFail: '重命名对话失败',
+        threadArchiveConfirm: '确认归档这个对话？',
+        threadArchiveFail: '归档对话失败',
+        threadRenameAction: '重命名',
+        threadArchiveAction: '归档',
         chatTitle: '对话',
         chatHintTpl: 'Enter 发送 · Shift+Enter 换行 · 默认无需 @{name}',
         traceSub: 'Agent 每次运行按思考链分组展示。默认隐藏流式输出片段；勾选下方可显示全部（适合调试）。',
@@ -144,15 +178,39 @@ const LANG_KEY = 'bioclaw-web-lang';
         settingsTitle: 'Settings',
         settingsAria: 'Open settings',
         closeSettingsAria: 'Close',
+        threadsTitle: 'Threads',
+        threadsHint: 'Each thread keeps its own memory and history.',
+        newThread: 'New chat',
+        newThreadPrompt: 'Enter a title for the new chat (optional)',
+        threadUntitled: 'New chat',
+        threadEmpty: 'No extra chats yet. Create a new independent thread from the button above.',
         secDisplay: 'Display',
         secConnection: 'Connection',
+        secControl: 'Control',
         lblLang: 'Language',
         lblTheme: 'Appearance',
         lblConn: 'Chat list',
         lblTraceConn: 'Trace feed',
         lblSession: 'Session ID',
+        lblControlCommand: 'Control command',
+        lblStatusPanel: 'Status',
+        lblDoctorPanel: 'Doctor',
         langToggle: '中文',
         themeToggle: 'Light / dark theme',
+        manageRefresh: 'Refresh',
+        manageRunCommand: 'Run',
+        manageCommandPlaceholder: 'For example: /status or /workspace list',
+        manageEmpty: 'No data yet.',
+        manageLoading: 'Loading…',
+        manageCommandError: 'Command failed',
+        manageFetchError: 'Load failed',
+        threadCreateFail: 'Failed to create thread',
+        threadRenamePrompt: 'Enter a new title',
+        threadRenameFail: 'Failed to rename thread',
+        threadArchiveConfirm: 'Archive this thread?',
+        threadArchiveFail: 'Failed to archive thread',
+        threadRenameAction: 'Rename',
+        threadArchiveAction: 'Archive',
         chatGroupLabel: 'Send to group',
         chatGroupDefault: 'Default (local chat)',
         chatTitle: 'Chat',
@@ -221,15 +279,25 @@ const LANG_KEY = 'bioclaw-web-lang';
       document.getElementById('settingsHeading').textContent = t.settingsTitle;
       openSettingsBtn.setAttribute('aria-label', t.settingsAria);
       closeSettingsBtn.setAttribute('aria-label', t.closeSettingsAria);
+      document.getElementById('threadsTitle').textContent = t.threadsTitle;
+      document.getElementById('threadsHint').textContent = t.threadsHint;
+      newThreadBtn.textContent = t.newThread;
       document.getElementById('secDisplay').textContent = t.secDisplay;
       document.getElementById('secConnection').textContent = t.secConnection;
+      document.getElementById('secControl').textContent = t.secControl;
       document.getElementById('lblLang').textContent = t.lblLang;
       document.getElementById('lblTheme').textContent = t.lblTheme;
       document.getElementById('lblConn').textContent = t.lblConn;
       document.getElementById('lblTraceConn').textContent = t.lblTraceConn;
       document.getElementById('lblSession').textContent = t.lblSession;
+      document.getElementById('lblControlCommand').textContent = t.lblControlCommand;
+      document.getElementById('lblStatusPanel').textContent = t.lblStatusPanel;
+      document.getElementById('lblDoctorPanel').textContent = t.lblDoctorPanel;
       langBtn.textContent = t.langToggle;
       themeBtn.textContent = t.themeToggle;
+      manageRefreshBtn.textContent = t.manageRefresh;
+      manageCommandBtn.textContent = t.manageRunCommand;
+      manageCommandInput.placeholder = t.manageCommandPlaceholder;
       document.getElementById('chatTitle').textContent = t.chatTitle;
       document.getElementById('chatHint').textContent = t.chatHintTpl.replace('{name}', assistantName);
       document.getElementById('i18n-chat-group-label').textContent = t.chatGroupLabel;
@@ -247,6 +315,9 @@ const LANG_KEY = 'bioclaw-web-lang';
       var hasFile = fileInput.files && fileInput.files[0];
       fileNameEl.textContent = hasFile ? fileInput.files[0].name : t.noFile;
       if (!groupSel.value) treeEl.textContent = t.treePick;
+      if (manageStatusPanel && !manageStatusPanel.textContent) manageStatusPanel.textContent = t.manageEmpty;
+      if (manageDoctorPanel && !manageDoctorPanel.textContent) manageDoctorPanel.textContent = t.manageEmpty;
+      renderThreads();
       if (lastConnMode === null) {
         connDot.classList.remove('live', 'poll');
         connLabel.textContent = t.connConnecting;
@@ -319,6 +390,103 @@ const LANG_KEY = 'bioclaw-web-lang';
       var h = {};
       if (AUTH_TOKEN) h['Authorization'] = 'Bearer ' + AUTH_TOKEN;
       return h;
+    }
+
+    function prettyJson(value) {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'string') return value;
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch (e) {
+        return String(value);
+      }
+    }
+
+    function formatManageStatus(status) {
+      if (!status) return T().manageEmpty;
+      var channels = Array.isArray(status.channels) ? status.channels : [];
+      var tasks = Array.isArray(status.tasks) ? status.tasks : [];
+      var lines = [
+        'Chat: ' + (status.chatJid || 'unknown'),
+        'Workspace: ' + (status.workspaceFolder || 'unbound'),
+        'Agent: ' + (status.agentId || 'unbound') + (status.agentName ? ' (' + status.agentName + ')' : ''),
+        'Provider: ' + (status.provider || 'unknown'),
+        'Model: ' + (status.model || 'unknown'),
+        'Memory: ' + (status.memoryConfigured ? 'configured' : 'empty'),
+        'Channels: ' + (channels.length ? channels.map(function (channel) {
+          return channel.name + '=' + (channel.connected ? 'up' : 'down');
+        }).join(', ') : 'none'),
+        'Tasks: ' + tasks.length,
+      ];
+      if (tasks.length) {
+        lines.push('');
+        lines.push('Scheduled tasks:');
+        tasks.slice(0, 8).forEach(function (task) {
+          lines.push('- ' + task.id + ' [' + task.status + ']' + (task.label ? ' ' + task.label : '') + (task.nextRun ? ' next=' + task.nextRun : ''));
+        });
+      }
+      return lines.join('\n');
+    }
+
+    function formatManageDoctor(doctor) {
+      if (!doctor) return T().manageEmpty;
+      var checks = Array.isArray(doctor.checks) ? doctor.checks : [];
+      var lines = [
+        'Runtime: ' + (doctor.runtime || 'unknown'),
+      ];
+      if (!checks.length) return lines.join('\n');
+      lines.push('');
+      checks.forEach(function (check) {
+        lines.push('- [' + check.status + '] ' + check.name + ': ' + check.detail);
+      });
+      return lines.join('\n');
+    }
+
+    async function refreshManagementPanels() {
+      var t = T();
+      if (manageStatusPanel) manageStatusPanel.textContent = t.manageLoading;
+      if (manageDoctorPanel) manageDoctorPanel.textContent = t.manageLoading;
+      try {
+        var [statusRes, doctorRes] = await Promise.all([
+          fetch('/api/manage/status?chatJid=' + encodeURIComponent(chatJid), { headers: authHeaders() }),
+          fetch('/api/manage/doctor?chatJid=' + encodeURIComponent(chatJid), { headers: authHeaders() }),
+        ]);
+        if (!statusRes.ok || !doctorRes.ok) throw new Error(t.manageFetchError);
+        var statusData = await statusRes.json();
+        var doctorData = await doctorRes.json();
+        if (manageStatusPanel) manageStatusPanel.textContent = formatManageStatus(statusData.status);
+        if (manageDoctorPanel) manageDoctorPanel.textContent = formatManageDoctor(doctorData.doctor);
+      } catch (e) {
+        var message = e && e.message ? e.message : t.manageFetchError;
+        if (manageStatusPanel) manageStatusPanel.textContent = message;
+        if (manageDoctorPanel) manageDoctorPanel.textContent = message;
+      }
+    }
+
+    async function runManageCommand(text) {
+      var t = T();
+      if (!text) return;
+      if (manageCommandBtn) manageCommandBtn.disabled = true;
+      if (manageCommandOutput) manageCommandOutput.textContent = t.manageLoading;
+      try {
+        var res = await fetch('/api/manage/command', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+          body: JSON.stringify({ chatJid: chatJid, text: text }),
+        });
+        if (!res.ok) throw new Error(t.manageCommandError);
+        var data = await res.json();
+        if (manageCommandOutput) {
+          manageCommandOutput.textContent = data.response || prettyJson(data.data) || t.manageEmpty;
+        }
+        await refreshManagementPanels();
+      } catch (e) {
+        if (manageCommandOutput) {
+          manageCommandOutput.textContent = e && e.message ? e.message : t.manageCommandError;
+        }
+      } finally {
+        if (manageCommandBtn) manageCommandBtn.disabled = false;
+      }
     }
 
     function esc(s) {
@@ -772,12 +940,133 @@ const LANG_KEY = 'bioclaw-web-lang';
       settingsBackdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
       settingsDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
     }
-    openSettingsBtn.addEventListener('click', function () { setSettingsOpen(true); });
+    openSettingsBtn.addEventListener('click', function () {
+      setSettingsOpen(true);
+      refreshManagementPanels();
+    });
     closeSettingsBtn.addEventListener('click', function () { setSettingsOpen(false); });
     settingsBackdrop.addEventListener('click', function () { setSettingsOpen(false); });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && settingsDrawer.classList.contains('is-open')) setSettingsOpen(false);
     });
+
+    function formatThreadTime(value) {
+      if (!value) return '';
+      try {
+        return new Date(value).toLocaleString([], {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch (e) {
+        return String(value);
+      }
+    }
+
+    function stopChatSse() {
+      if (chatEs) {
+        chatEs.close();
+        chatEs = null;
+      }
+    }
+
+    function renderThreads() {
+      if (!threadListEl) return;
+      var t = T();
+      if (!threads.length) {
+        threadListEl.innerHTML = '<div class="thread-empty">' + esc(t.threadEmpty) + '</div>';
+        return;
+      }
+      threadListEl.innerHTML = threads.map(function (thread) {
+        var active = thread.chatJid === chatJid ? ' is-active' : '';
+        var title = thread.title || t.threadUntitled;
+        var metaTime = formatThreadTime(thread.lastActivity || thread.addedAt);
+        return '<div class="thread-item' + active + '" data-chat-jid="' + esc(thread.chatJid) + '" role="button" tabindex="0">' +
+          '<div class="thread-item-row">' +
+          '<div class="thread-item-main">' +
+          '<div class="thread-item-title">' + esc(title) + '</div>' +
+          '<div class="thread-item-meta"><span>' + esc(thread.workspaceFolder || '') + '</span><span>' + esc(metaTime) + '</span></div>' +
+          '</div>' +
+          '<div class="thread-item-actions">' +
+          '<button type="button" class="thread-action" data-thread-action="rename" data-chat-jid="' + esc(thread.chatJid) + '" title="' + esc(t.threadRenameAction) + '">✎</button>' +
+          '<button type="button" class="thread-action" data-thread-action="archive" data-chat-jid="' + esc(thread.chatJid) + '" title="' + esc(t.threadArchiveAction) + '">×</button>' +
+          '</div>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    async function refreshThreads() {
+      try {
+        var res = await fetch('/api/threads', { headers: authHeaders() });
+        if (!res.ok) return;
+        var data = await res.json();
+        threads = Array.isArray(data.threads) ? data.threads : [];
+        if (!threads.some(function (thread) { return thread.chatJid === chatJid; }) && threads[0]) {
+          chatJid = threads[0].chatJid;
+        }
+        if (jidEl) jidEl.textContent = chatJid;
+        renderThreads();
+      } catch (e) {}
+    }
+
+    async function setActiveThread(nextChatJid) {
+      if (!nextChatJid || nextChatJid === chatJid) return;
+      chatJid = nextChatJid;
+      lastSignature = '';
+      messagesEl.innerHTML = '';
+      if (jidEl) jidEl.textContent = chatJid;
+      try { localStorage.setItem(THREAD_KEY, chatJid); } catch (e) {}
+      renderThreads();
+      stopPolling();
+      stopChatSse();
+      await refreshMessages();
+      await refreshManagementPanels();
+      connectChatSse();
+    }
+
+    async function renameThread(threadChatJid) {
+      var current = threads.find(function (thread) { return thread.chatJid === threadChatJid; });
+      var nextTitle = window.prompt(T().threadRenamePrompt, current && current.title ? current.title : '');
+      if (nextTitle === null) return;
+      nextTitle = nextTitle.trim();
+      if (!nextTitle) return;
+      try {
+        var res = await fetch('/api/threads/' + encodeURIComponent(threadChatJid), {
+          method: 'PATCH',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+          body: JSON.stringify({ title: nextTitle }),
+        });
+        if (!res.ok) throw new Error(T().threadRenameFail);
+        await refreshThreads();
+      } catch (e) {
+        setStatus(e && e.message ? e.message : T().threadRenameFail);
+      }
+    }
+
+    async function archiveThread(threadChatJid) {
+      if (!window.confirm(T().threadArchiveConfirm)) return;
+      try {
+        var wasActive = chatJid === threadChatJid;
+        var res = await fetch('/api/threads/' + encodeURIComponent(threadChatJid), {
+          method: 'DELETE',
+          headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(T().threadArchiveFail);
+        var data = await res.json();
+        await refreshThreads();
+        if (data.nextChatJid && wasActive) {
+          chatJid = '';
+          await setActiveThread(data.nextChatJid);
+        } else if (wasActive && threads[0]) {
+          chatJid = '';
+          await setActiveThread(threads[0].chatJid);
+        }
+      } catch (e) {
+        setStatus(e && e.message ? e.message : T().threadArchiveFail);
+      }
+    }
 
     function render(messages) {
       var signature = JSON.stringify(messages.map(function (m) { return [m.id, m.timestamp, m.content]; }));
@@ -827,7 +1116,7 @@ const LANG_KEY = 'bioclaw-web-lang';
 
     async function refreshMessages() {
       try {
-        var res = await fetch('/api/messages?chatJid=' + encodeURIComponent(chatJid));
+        var res = await fetch('/api/messages?scope=chat&chatJid=' + encodeURIComponent(chatJid));
         if (!res.ok) return;
         var data = await res.json();
         render(data.messages || []);
@@ -854,6 +1143,82 @@ const LANG_KEY = 'bioclaw-web-lang';
           startPolling();
         };
       } catch (e) { startPolling(); }
+    }
+
+    if (threadListEl) {
+      threadListEl.addEventListener('click', async function (event) {
+        var actionButton = event.target && event.target.closest ? event.target.closest('[data-thread-action]') : null;
+        if (actionButton) {
+          event.preventDefault();
+          event.stopPropagation();
+          var action = actionButton.getAttribute('data-thread-action');
+          var actionChatJid = actionButton.getAttribute('data-chat-jid');
+          if (!action || !actionChatJid) return;
+          if (action === 'rename') {
+            await renameThread(actionChatJid);
+          } else if (action === 'archive') {
+            await archiveThread(actionChatJid);
+          }
+          return;
+        }
+        var button = event.target && event.target.closest ? event.target.closest('.thread-item') : null;
+        if (!button) return;
+        var nextChatJid = button.getAttribute('data-chat-jid');
+        if (nextChatJid) await setActiveThread(nextChatJid);
+      });
+      threadListEl.addEventListener('keydown', async function (event) {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        var item = event.target && event.target.closest ? event.target.closest('.thread-item') : null;
+        if (!item) return;
+        event.preventDefault();
+        var nextChatJid = item.getAttribute('data-chat-jid');
+        if (nextChatJid) await setActiveThread(nextChatJid);
+      });
+    }
+
+    if (newThreadBtn) {
+      newThreadBtn.addEventListener('click', async function () {
+        var title = window.prompt(T().newThreadPrompt, '');
+        if (title === null) return;
+        newThreadBtn.disabled = true;
+        try {
+          var res = await fetch('/api/threads', {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+            body: JSON.stringify({ title: title }),
+          });
+          if (!res.ok) throw new Error('THREAD_CREATE_FAIL');
+          var data = await res.json();
+          await refreshThreads();
+          if (data.thread && data.thread.chatJid) {
+            await setActiveThread(data.thread.chatJid);
+          }
+        } catch (e) {
+          setStatus(T().threadCreateFail);
+        } finally {
+          newThreadBtn.disabled = false;
+        }
+      });
+    }
+
+    if (manageRefreshBtn) {
+      manageRefreshBtn.addEventListener('click', function () {
+        refreshManagementPanels();
+      });
+    }
+
+    if (manageCommandBtn) {
+      manageCommandBtn.addEventListener('click', function () {
+        runManageCommand((manageCommandInput && manageCommandInput.value || '').trim());
+      });
+    }
+
+    if (manageCommandInput) {
+      manageCommandInput.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        runManageCommand(manageCommandInput.value.trim());
+      });
     }
 
     fileInput.addEventListener('change', function () {
@@ -905,45 +1270,21 @@ const LANG_KEY = 'bioclaw-web-lang';
 
     function setStatus(text) { statusEl.textContent = text || ''; }
 
-    var defaultChatJid = chatJid;
-    var chatGroupSel = document.getElementById('chatGroupSel');
-    var CHAT_GROUP_KEY = 'bioclaw-chat-group-jid';
-
-    function switchChatGroup(jid) {
-      chatJid = jid || defaultChatJid;
-      if (chatEs) { chatEs.close(); chatEs = null; }
-      stopPolling();
+    (async function initThreadsAndChat() {
+      try {
+        await refreshThreads();
+        var savedThread = null;
+        try { savedThread = localStorage.getItem(THREAD_KEY); } catch (e) {}
+        if (savedThread && threads.some(function (thread) { return thread.chatJid === savedThread; })) {
+          chatJid = savedThread;
+        } else if (threads.length > 0) {
+          chatJid = threads[0].chatJid;
+        }
+        if (jidEl) jidEl.textContent = chatJid;
+        renderThreads();
+      } catch (e) {}
       refreshMessages();
+      refreshManagementPanels();
       connectChatSse();
-    }
-
-    chatGroupSel.addEventListener('change', function () {
-      try { localStorage.setItem(CHAT_GROUP_KEY, chatGroupSel.value); } catch (e) {}
-      switchChatGroup(chatGroupSel.value || defaultChatJid);
-    });
-
-    fetch('/api/groups').then(function (r) { return r.json(); }).then(function (groups) {
-      var t = T();
-      chatGroupSel.innerHTML = '';
-      var defOpt = document.createElement('option');
-      defOpt.value = '';
-      defOpt.textContent = t.chatGroupDefault;
-      chatGroupSel.appendChild(defOpt);
-      Object.keys(groups).forEach(function (jid) {
-        var g = groups[jid];
-        var opt = document.createElement('option');
-        opt.value = jid;
-        opt.textContent = g.name || g.folder || jid;
-        chatGroupSel.appendChild(opt);
-      });
-      var saved = null;
-      try { saved = localStorage.getItem(CHAT_GROUP_KEY); } catch (e) {}
-      if (saved && chatGroupSel.querySelector('option[value="' + saved + '"]')) {
-        chatGroupSel.value = saved;
-        chatJid = saved;
-      }
-    }).catch(function () {});
-
-    refreshMessages();
-    connectChatSse();
+    })();
 })();

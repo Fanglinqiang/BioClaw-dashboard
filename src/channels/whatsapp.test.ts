@@ -5,6 +5,9 @@ import { EventEmitter } from 'events';
 
 // Mock config
 vi.mock('../config.js', () => ({
+  ALLOW_WHATSAPP_SELF_MESSAGES: false,
+  ASSISTANT_NAME: 'Bioclaw',
+  GROUPS_DIR: '/tmp/bioclaw-test-groups',
   STORE_DIR: '/tmp/bioclaw-test-store',
 }));
 
@@ -81,6 +84,7 @@ let fakeSocket: ReturnType<typeof createFakeSocket>;
 // Mock Baileys
 vi.mock('@whiskeysockets/baileys', () => {
   return {
+    downloadMediaMessage: vi.fn().mockResolvedValue(Buffer.from('image-bytes')),
     default: vi.fn(() => fakeSocket),
     Browsers: {
       macOS: vi.fn((browser: string) => ['Mac OS', browser, '14.4.1']),
@@ -97,6 +101,9 @@ vi.mock('@whiskeysockets/baileys', () => {
       restartRequired: 515,
     },
     makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
+    fetchLatestBaileysVersion: vi.fn().mockResolvedValue({
+      version: [2, 3000, 1035194821],
+    }),
     useMultiFileAuthState: vi.fn().mockResolvedValue({
       state: {
         creds: {},
@@ -333,6 +340,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'registered@g.us',
         expect.any(String),
+        'WhatsApp Group red@g.us',
       );
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
@@ -368,6 +376,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'unregistered@g.us',
         expect.any(String),
+        'WhatsApp Group red@g.us',
       );
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
@@ -467,7 +476,9 @@ describe('WhatsAppChannel', () => {
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
-        expect.objectContaining({ content: 'Check this photo' }),
+        expect.objectContaining({
+          content: expect.stringContaining('Check this photo'),
+        }),
       );
     });
 
@@ -592,6 +603,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         '1234567890@s.whatsapp.net',
         expect.any(String),
+        'WhatsApp DM Self',
       );
     });
 
@@ -618,6 +630,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'registered@g.us',
         expect.any(String),
+        'WhatsApp Group red@g.us',
       );
     });
 
@@ -644,6 +657,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         '0000000000@lid',
         expect.any(String),
+        'WhatsApp DM Unknown',
       );
     });
   });

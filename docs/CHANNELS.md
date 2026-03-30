@@ -50,6 +50,37 @@ The server IP must be on that app’s trusted IP whitelist.
 
 ---
 
+## QQ Official Bot
+
+BioClaw currently supports **official QQ Bot** text receive/reply over **WebSocket**.
+
+Supported inbound events in the current MVP:
+- `C2C_MESSAGE_CREATE` for private chat messages
+- `GROUP_AT_MESSAGE_CREATE` for group `@bot` messages
+
+1. Create a bot app in the QQ Open Platform (`q.qq.com`).
+2. Enable **WebSocket** event delivery for the bot.
+3. Subscribe the private-chat and group-@bot message events (the current implementation listens with `1 << 25`, the combined group/C2C intent documented by QQ Bot).
+4. Add these variables to `.env`:
+
+   ```bash
+   QQ_APP_ID=your-app-id
+   QQ_CLIENT_SECRET=your-client-secret
+   # Optional: use QQ sandbox gateway/API endpoints
+   # QQ_SANDBOX=true
+   ```
+
+5. Start BioClaw. The first private message or group `@bot` message auto-registers that conversation.
+
+Current limits:
+- Official QQ Bot only; no personal QQ automation
+- Text-only send/receive in this first version
+- Group replies are intended for `@bot` message flows
+
+Chinese setup notes: [QQ_SETUP.zh-CN.md](QQ_SETUP.zh-CN.md)
+
+---
+
 ## Feishu (Lark)
 
 BioClaw currently supports **text receive/reply** for Feishu bots. Start with **WebSocket mode** if possible; use webhook mode only when your deployment requires inbound HTTP callbacks.

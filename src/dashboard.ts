@@ -109,7 +109,7 @@ function tailFile(filePath: string, lines: number): string[] {
 
 // Model specs (context window / max output / reasoning support)
 const MODEL_SPECS: Record<string, { contextWindow: number; maxOutput: number; reasoning: boolean }> = {
-  'MiniMax-M2.5':              { contextWindow: 1_000_000, maxOutput: 40_960, reasoning: true },
+  'MiniMax-M2.7':              { contextWindow: 1_000_000, maxOutput: 40_960, reasoning: true },
   'MiniMax-M1':                { contextWindow: 1_000_000, maxOutput: 40_960, reasoning: true },
   'claude-opus-4-6':           { contextWindow: 200_000,   maxOutput: 32_768, reasoning: true },
   'claude-sonnet-4-6':         { contextWindow: 200_000,   maxOutput: 16_384, reasoning: true },

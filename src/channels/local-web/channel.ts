@@ -8,19 +8,58 @@ import {
   GROUPS_DIR,
   LOCAL_WEB_GROUP_FOLDER,
   LOCAL_WEB_GROUP_JID,
+  LOCAL_WEB_GROUP_NAME,
   LOCAL_WEB_HOST,
   LOCAL_WEB_PORT,
   LOCAL_WEB_SECRET,
 } from '../../config.js';
 import { handleDashboardRoutes, initDashboardTraceBroadcast, shutdownDashboardTraceBroadcast } from '../../dashboard/server.js';
 import { getWebVendorScripts } from './vendor-scripts.js';
-import { getAllRegisteredGroups, getRecentMessages, storeChatMetadata, storeMessageDirect } from '../../db/index.js';
+import { getAllRegisteredGroups, getRecentMessages, getRecentMessagesForChats, storeChatMetadata, storeMessageDirect } from '../../db/index.js';
 import { logger } from '../../logger.js';
 import { Channel, OnInboundMessage, OnChatMetadata } from '../../types.js';
 
 interface LocalWebChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
+  getWorkspaceFolder?: (chatJid: string) => string;
+  getWorkspaceChatJids?: (chatJid: string) => string[];
+  listThreads?: () => Array<{
+    chatJid: string;
+    title: string;
+    workspaceFolder: string;
+    addedAt: string;
+    lastActivity?: string;
+    agentId?: string;
+  }>;
+  createThread?: (title?: string) => Promise<{
+    chatJid: string;
+    title: string;
+    workspaceFolder: string;
+    addedAt: string;
+    lastActivity?: string;
+    agentId?: string;
+  }>;
+  renameThread?: (chatJid: string, title: string) => Promise<{
+    chatJid: string;
+    title: string;
+    workspaceFolder: string;
+    addedAt: string;
+    lastActivity?: string;
+    agentId?: string;
+  } | undefined>;
+  archiveThread?: (chatJid: string) => Promise<{
+    archivedChatJid: string;
+    nextChatJid?: string;
+  } | undefined>;
+  getStatusSnapshot?: (chatJid: string) => unknown;
+  getDoctorSnapshot?: (chatJid: string) => unknown;
+  getManagementSnapshot?: () => unknown;
+  executeCommand?: (chatJid: string, text: string) => Promise<{
+    handled: boolean;
+    response?: string;
+    data?: unknown;
+  }>;
 }
 
 interface IncomingPayload {
@@ -64,23 +103,6 @@ function sanitizeFileName(filename: string): string {
   return basename || 'upload.bin';
 }
 
-function ensureUploadDir(): string {
-  const uploadDir = path.join(GROUPS_DIR, LOCAL_WEB_GROUP_FOLDER, 'uploads');
-  fs.mkdirSync(uploadDir, { recursive: true });
-  return uploadDir;
-}
-
-function buildUploadPaths(filename: string): { relativePath: string; absolutePath: string; publicPath: string } {
-  const safeName = sanitizeFileName(filename);
-  const storedName = `${Date.now()}-${safeName}`;
-  const relativePath = path.posix.join('uploads', storedName);
-  return {
-    relativePath,
-    absolutePath: path.join(ensureUploadDir(), storedName),
-    publicPath: `/files/${relativePath}`,
-  };
-}
-
 function isSafeRelativePath(relativePath: string): boolean {
   const normalized = path.posix.normalize(relativePath).replace(/^\/+/, '');
   return normalized.length > 0 && !normalized.startsWith('..');
@@ -100,6 +122,40 @@ export class LocalWebChannel implements Channel {
 
   constructor(opts: LocalWebChannelOpts) {
     this.opts = opts;
+  }
+
+  private resolveWorkspaceFolder(chatJid: string): string {
+    return this.opts.getWorkspaceFolder?.(chatJid) || LOCAL_WEB_GROUP_FOLDER;
+  }
+
+  private resolveWorkspaceChatJids(chatJid: string): string[] {
+    const related = this.opts.getWorkspaceChatJids?.(chatJid);
+    return related && related.length > 0 ? related : [chatJid];
+  }
+
+  private buildUploadPaths(
+    chatJid: string,
+    filename: string,
+  ): { relativePath: string; absolutePath: string; publicPath: string } {
+    const safeName = sanitizeFileName(filename);
+    const storedName = `${Date.now()}-${safeName}`;
+    const relativePath = path.posix.join('uploads', storedName);
+    const workspaceFolder = this.resolveWorkspaceFolder(chatJid);
+    const uploadDir = path.join(GROUPS_DIR, workspaceFolder, 'uploads');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    return {
+      relativePath,
+      absolutePath: path.join(uploadDir, storedName),
+      publicPath: this.buildPublicFilePath(chatJid, relativePath),
+    };
+  }
+
+  private resolveWorkspacePath(chatJid: string, relativePath: string): string {
+    return path.join(GROUPS_DIR, this.resolveWorkspaceFolder(chatJid), relativePath);
+  }
+
+  private buildPublicFilePath(chatJid: string, relativePath: string): string {
+    return `/files/chat/${encodeURIComponent(chatJid)}/${relativePath}`;
   }
 
   async connect(): Promise<void> {
@@ -174,11 +230,12 @@ export class LocalWebChannel implements Channel {
   async sendImage(jid: string, imagePath: string, caption?: string): Promise<void> {
     const filename = path.basename(imagePath);
     // Copy image to group dir so it can be served via /files/
-    const imagesDir = path.join(GROUPS_DIR, LOCAL_WEB_GROUP_FOLDER, 'images');
+    const imagesDir = path.join(GROUPS_DIR, this.resolveWorkspaceFolder(jid), 'images');
     fs.mkdirSync(imagesDir, { recursive: true });
     const destPath = path.join(imagesDir, `${Date.now()}-${filename}`);
     fs.copyFileSync(imagePath, destPath);
-    const webPath = `/files/images/${path.basename(destPath)}`;
+    const relativePath = path.posix.join('images', path.basename(destPath));
+    const webPath = this.buildPublicFilePath(jid, relativePath);
     const content = caption
       ? `${caption}\n\n![${caption}](${webPath})`
       : `![image](${webPath})`;
@@ -243,15 +300,201 @@ export class LocalWebChannel implements Channel {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/threads') {
+      const threads = this.opts.listThreads?.() || [
+        {
+          chatJid: LOCAL_WEB_GROUP_JID,
+          title: LOCAL_WEB_GROUP_NAME,
+          workspaceFolder: this.resolveWorkspaceFolder(LOCAL_WEB_GROUP_JID),
+          addedAt: new Date().toISOString(),
+        },
+      ];
+      sendJson(res, 200, { threads });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/threads') {
+      if (!this.opts.createThread) {
+        sendJson(res, 501, { error: 'Thread creation not supported' });
+        return;
+      }
+      const body = (await readBody(req)).toString('utf-8');
+      const payload = JSON.parse(body || '{}') as { title?: string };
+      const thread = await this.opts.createThread(payload.title);
+      sendJson(res, 200, { ok: true, thread });
+      return;
+    }
+
+    if ((req.method === 'PATCH' || req.method === 'DELETE') && url.pathname.startsWith('/api/threads/')) {
+      const encodedChatJid = url.pathname.slice('/api/threads/'.length);
+      const threadChatJid = decodeURIComponent(encodedChatJid);
+
+      if (req.method === 'PATCH') {
+        if (!this.opts.renameThread) {
+          sendJson(res, 501, { error: 'Thread rename not supported' });
+          return;
+        }
+        const body = (await readBody(req)).toString('utf-8');
+        const payload = JSON.parse(body || '{}') as { title?: string };
+        const title = payload.title?.trim() || '';
+        if (!title) {
+          sendJson(res, 400, { error: 'Missing thread title' });
+          return;
+        }
+        const thread = await this.opts.renameThread(threadChatJid, title);
+        if (!thread) {
+          sendJson(res, 404, { error: 'Thread not found' });
+          return;
+        }
+        sendJson(res, 200, { ok: true, thread });
+        return;
+      }
+
+      if (!this.opts.archiveThread) {
+        sendJson(res, 501, { error: 'Thread archive not supported' });
+        return;
+      }
+      const result = await this.opts.archiveThread(threadChatJid);
+      if (!result) {
+        sendJson(res, 404, { error: 'Thread not found or cannot be archived' });
+        return;
+      }
+      sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/events') {
       const chatJid = url.searchParams.get('chatJid') || LOCAL_WEB_GROUP_JID;
       this.wireSse(res, chatJid);
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/manage/status') {
+      const chatJid = url.searchParams.get('chatJid') || LOCAL_WEB_GROUP_JID;
+      sendJson(res, 200, {
+        ok: true,
+        status: this.opts.getStatusSnapshot?.(chatJid) || null,
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/doctor') {
+      const chatJid = url.searchParams.get('chatJid') || LOCAL_WEB_GROUP_JID;
+      sendJson(res, 200, {
+        ok: true,
+        doctor: this.opts.getDoctorSnapshot?.(chatJid) || null,
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/overview') {
+      sendJson(res, 200, {
+        ok: true,
+        overview: this.opts.getManagementSnapshot?.() || {},
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/agents') {
+      const overview = this.opts.getManagementSnapshot?.() as Record<string, unknown> | undefined;
+      sendJson(res, 200, {
+        ok: true,
+        agents: Array.isArray(overview?.agents) ? overview.agents : [],
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/workspaces') {
+      const overview = this.opts.getManagementSnapshot?.() as Record<string, unknown> | undefined;
+      sendJson(res, 200, {
+        ok: true,
+        workspaces: Array.isArray(overview?.workspaces) ? overview.workspaces : [],
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/manage/tasks') {
+      const overview = this.opts.getManagementSnapshot?.() as Record<string, unknown> | undefined;
+      sendJson(res, 200, {
+        ok: true,
+        tasks: Array.isArray(overview?.tasks) ? overview.tasks : [],
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/manage/command') {
+      if (!this.opts.executeCommand) {
+        sendJson(res, 501, { error: 'Command execution not supported' });
+        return;
+      }
+      const body = (await readBody(req)).toString('utf-8');
+      const payload = JSON.parse(body || '{}') as { chatJid?: string; text?: string };
+      const chatJid = payload.chatJid || LOCAL_WEB_GROUP_JID;
+      const text = payload.text?.trim() || '';
+      if (!text) {
+        sendJson(res, 400, { error: 'Missing command text' });
+        return;
+      }
+      const result = await this.opts.executeCommand(chatJid, text);
+      sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/messages') {
       const chatJid = url.searchParams.get('chatJid') || LOCAL_WEB_GROUP_JID;
-      sendJson(res, 200, { messages: getRecentMessages(chatJid, 100) });
+      const scope = url.searchParams.get('scope') || 'chat';
+      const chatJids = scope === 'workspace'
+        ? this.resolveWorkspaceChatJids(chatJid)
+        : [chatJid];
+      sendJson(
+        res,
+        200,
+        {
+          messages: chatJids.length > 1
+            ? getRecentMessagesForChats(chatJids, 100)
+            : getRecentMessages(chatJid, 100),
+        },
+      );
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith('/files/chat/')) {
+      const relative = url.pathname.slice('/files/chat/'.length);
+      const slash = relative.indexOf('/');
+      if (slash === -1) {
+        sendJson(res, 400, { error: 'Invalid file path' });
+        return;
+      }
+      const encodedChatJid = relative.slice(0, slash);
+      const chatJid = decodeURIComponent(encodedChatJid);
+      const relativePath = relative.slice(slash + 1);
+      if (!isSafeRelativePath(relativePath)) {
+        sendJson(res, 400, { error: 'Invalid file path' });
+        return;
+      }
+      const workspaceRoot = path.join(GROUPS_DIR, this.resolveWorkspaceFolder(chatJid));
+      const absolutePath = path.join(workspaceRoot, relativePath);
+      if (!absolutePath.startsWith(workspaceRoot)) {
+        sendJson(res, 403, { error: 'Forbidden' });
+        return;
+      }
+      if (!fs.existsSync(absolutePath)) {
+        sendJson(res, 404, { error: 'File not found' });
+        return;
+      }
+      const ext = path.extname(absolutePath).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.pdf': 'application/pdf',
+      };
+      res.statusCode = 200;
+      res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+      res.end(fs.readFileSync(absolutePath));
       return;
     }
 
@@ -261,8 +504,9 @@ export class LocalWebChannel implements Channel {
         sendJson(res, 400, { error: 'Invalid file path' });
         return;
       }
-      const absolutePath = path.join(GROUPS_DIR, LOCAL_WEB_GROUP_FOLDER, relativePath);
-      if (!absolutePath.startsWith(path.join(GROUPS_DIR, LOCAL_WEB_GROUP_FOLDER))) {
+      const workspaceRoot = path.join(GROUPS_DIR, this.resolveWorkspaceFolder(LOCAL_WEB_GROUP_JID));
+      const absolutePath = path.join(workspaceRoot, relativePath);
+      if (!absolutePath.startsWith(workspaceRoot)) {
         sendJson(res, 403, { error: 'Forbidden' });
         return;
       }
@@ -305,7 +549,7 @@ export class LocalWebChannel implements Channel {
         sendJson(res, 400, { error: 'Empty file upload' });
         return;
       }
-      const paths = buildUploadPaths(originalName);
+      const paths = this.buildUploadPaths(chatJid, originalName);
       fs.writeFileSync(paths.absolutePath, body);
       await this.acceptInbound(
         chatJid,
@@ -410,6 +654,10 @@ export class LocalWebChannel implements Channel {
         this.sseClients.delete(client);
       }
     }
+  }
+
+  notifyExternalUpdate(_chatJid: string): void {
+    this.notifySse(LOCAL_WEB_GROUP_JID);
   }
 
   private static readonly ASSETS_DIR = path.join('src', 'channels', 'local-web', 'assets');

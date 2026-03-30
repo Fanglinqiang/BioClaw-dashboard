@@ -8,8 +8,10 @@ loadEnvFile();
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Bioclaw';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
-export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP === 'true';
-export const ENABLE_LOCAL_WEB = process.env.ENABLE_LOCAL_WEB !== 'false';
+export const ENABLE_WHATSAPP = process.env.ENABLE_WHATSAPP !== 'false';
+export const ALLOW_WHATSAPP_SELF_MESSAGES =
+  process.env.ALLOW_WHATSAPP_SELF_MESSAGES === 'true';
+export const ENABLE_LOCAL_WEB = process.env.ENABLE_LOCAL_WEB === 'true';
 export const LOCAL_WEB_HOST = process.env.LOCAL_WEB_HOST || 'localhost';
 export const LOCAL_WEB_PORT = parseInt(process.env.LOCAL_WEB_PORT || '3000', 10);
 export const LOCAL_WEB_GROUP_JID =
@@ -19,6 +21,9 @@ export const LOCAL_WEB_GROUP_NAME =
 export const LOCAL_WEB_GROUP_FOLDER =
   process.env.LOCAL_WEB_GROUP_FOLDER || 'local-web';
 export const LOCAL_WEB_SECRET = process.env.LOCAL_WEB_SECRET || '';
+export const QQ_APP_ID = process.env.QQ_APP_ID || '';
+export const QQ_CLIENT_SECRET = process.env.QQ_CLIENT_SECRET || '';
+export const QQ_SANDBOX = process.env.QQ_SANDBOX === 'true';
 export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 export const FEISHU_CONNECTION_MODE =
@@ -49,6 +54,8 @@ export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const MAIN_GROUP_FOLDER = 'main';
 
+export const CONTAINER_RUNTIME: 'docker' | 'apptainer' =
+  (process.env.CONTAINER_RUNTIME || 'docker').toLowerCase() as 'docker' | 'apptainer';
 export const CONTAINER_IMAGE =
   process.env.CONTAINER_IMAGE || 'bioclaw-agent:latest';
 export const CONTAINER_TIMEOUT = parseInt(
@@ -89,7 +96,7 @@ export const TIMEZONE =
 // MiniMax (optional)
 export const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY || '';
 export const MINIMAX_BASE_URL = process.env.MINIMAX_BASE_URL || 'https://api.minimax.chat/v1';
-export const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'MiniMax-M2.5';
+export const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'MiniMax-M2.7';
 
 // Qwen (optional — set via env or .env file)
 export const QWEN_API_BASE = process.env.QWEN_API_BASE || '';

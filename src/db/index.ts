@@ -13,6 +13,7 @@ export {
   getNewMessages,
   getMessagesSince,
   getRecentMessages,
+  getRecentMessagesForChats,
   getAllChats,
   getLastGroupSync,
   setLastGroupSync,
@@ -25,6 +26,24 @@ export {
   setRegisteredGroup,
   getAllRegisteredGroups,
 } from './groups.js';
+
+// Agents & bindings
+export {
+  getAgent,
+  getAllAgents,
+  upsertAgent,
+  ensureDefaultAgentForWorkspace,
+  setDefaultChatAgentBinding,
+  getAllDefaultChatAgentBindings,
+} from './agents.js';
+
+// Chat threads
+export {
+  getChatThread,
+  getChatThreads,
+  upsertChatThread,
+  archiveChatThread,
+} from './chat-threads.js';
 
 // Tasks
 export {
