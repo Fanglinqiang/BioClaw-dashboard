@@ -4,14 +4,17 @@ import {
   _initTestDatabase,
   createTask,
   deleteTask,
+  getAgentTraceEvents,
   getAllChats,
   getMessagesSince,
+  getRecentMessages,
   getNewMessages,
   getTaskById,
+  insertAgentTraceEvent,
   storeChatMetadata,
   storeMessage,
   updateTask,
-} from './db.js';
+} from './db/index.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -26,6 +29,7 @@ function store(overrides: {
   content: string;
   timestamp: string;
   is_from_me?: boolean;
+  message_type?: 'chat' | 'control' | 'system';
 }) {
   storeMessage({
     id: overrides.id,
@@ -35,6 +39,7 @@ function store(overrides: {
     content: overrides.content,
     timestamp: overrides.timestamp,
     is_from_me: overrides.is_from_me ?? false,
+    message_type: overrides.message_type,
   });
 }
 
@@ -91,9 +96,10 @@ describe('storeMessage', () => {
       is_from_me: true,
     });
 
-    // Message is stored (we can retrieve it — is_from_me doesn't affect retrieval)
-    const messages = getMessagesSince('group@g.us', '2024-01-01T00:00:00.000Z', 'BotName');
+    // Verify the row is stored with its author flag intact.
+    const messages = getRecentMessages('group@g.us');
     expect(messages).toHaveLength(1);
+    expect(messages[0].is_from_me).toBe(1);
   });
 
   it('upserts on duplicate id+chat_jid', () => {
@@ -165,6 +171,21 @@ describe('getMessagesSince', () => {
     // 3 user messages (bot message excluded)
     expect(msgs).toHaveLength(3);
   });
+
+  it('excludes control messages from agent polling', () => {
+    store({
+      id: 'control-1',
+      chat_jid: 'group@g.us',
+      sender: 'user@s.whatsapp.net',
+      sender_name: 'User',
+      content: '/status',
+      timestamp: '2024-01-01T00:00:05.000Z',
+      message_type: 'control',
+    });
+
+    const msgs = getMessagesSince('group@g.us', '', 'Bio');
+    expect(msgs.some((msg) => msg.id === 'control-1')).toBe(false);
+  });
 });
 
 // --- getNewMessages ---
@@ -218,6 +239,25 @@ describe('getNewMessages', () => {
     const { messages, newTimestamp } = getNewMessages([], '', 'Bio');
     expect(messages).toHaveLength(0);
     expect(newTimestamp).toBe('');
+  });
+
+  it('excludes control messages from global polling', () => {
+    store({
+      id: 'ctl-1',
+      chat_jid: 'group1@g.us',
+      sender: 'user@s.whatsapp.net',
+      sender_name: 'User',
+      content: '/doctor',
+      timestamp: '2024-01-01T00:00:05.000Z',
+      message_type: 'control',
+    });
+
+    const { messages } = getNewMessages(
+      ['group1@g.us', 'group2@g.us'],
+      '2024-01-01T00:00:00.000Z',
+      'Bio',
+    );
+    expect(messages.some((msg) => msg.id === 'ctl-1')).toBe(false);
   });
 });
 
@@ -311,5 +351,48 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+});
+
+describe('agent_trace_events', () => {
+  it('inserts and lists by group', () => {
+    insertAgentTraceEvent({
+      group_folder: 'local-web',
+      chat_jid: 'x@local.web',
+      session_id: 'sess-1',
+      type: 'run_start',
+      payload: { n: 1 },
+    });
+    insertAgentTraceEvent({
+      group_folder: 'main',
+      type: 'ipc_send',
+      payload: { kind: 'text' },
+    });
+    const all = getAgentTraceEvents({ limit: 10 });
+    expect(all.length).toBe(2);
+    const local = getAgentTraceEvents({ group_folder: 'local-web', limit: 10 });
+    expect(local).toHaveLength(1);
+    expect(local[0].type).toBe('run_start');
+    expect(JSON.parse(local[0].payload)).toEqual({ n: 1 });
+  });
+
+  it('omits types when omit_types is set', () => {
+    insertAgentTraceEvent({
+      group_folder: 'omit-test',
+      type: 'stream_output',
+      payload: { x: 1 },
+    });
+    insertAgentTraceEvent({
+      group_folder: 'omit-test',
+      type: 'run_end',
+      payload: { ok: true },
+    });
+    const filtered = getAgentTraceEvents({
+      group_folder: 'omit-test',
+      limit: 10,
+      omit_types: ['stream_output'],
+    });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].type).toBe('run_end');
   });
 });

@@ -28,7 +28,7 @@ import {
   getTokenUsageSummary,
   logTokenUsage,
   updateTask,
-} from './db.js';
+} from './db/index.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -109,7 +109,7 @@ function tailFile(filePath: string, lines: number): string[] {
 
 // Model specs (context window / max output / reasoning support)
 const MODEL_SPECS: Record<string, { contextWindow: number; maxOutput: number; reasoning: boolean }> = {
-  'MiniMax-M2.5':              { contextWindow: 1_000_000, maxOutput: 40_960, reasoning: true },
+  'MiniMax-M2.7':              { contextWindow: 1_000_000, maxOutput: 40_960, reasoning: true },
   'MiniMax-M1':                { contextWindow: 1_000_000, maxOutput: 40_960, reasoning: true },
   'claude-opus-4-6':           { contextWindow: 200_000,   maxOutput: 32_768, reasoning: true },
   'claude-sonnet-4-6':         { contextWindow: 200_000,   maxOutput: 16_384, reasoning: true },
@@ -434,8 +434,7 @@ async function handleApi(
     return true;
   }
 
-  // Chat endpoint — streams SSE: text/tool_call/tool_result/session/done/error events
-  if (pathname === '/api/chat' && req.method === 'POST') {
+  if (false && pathname === '/api/chat' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req));
     const { message, sessionId, groupFolder, attachments } = body as {
       message: string;
@@ -478,7 +477,7 @@ async function handleApi(
         const groupDir = path.join(GROUPS_DIR, group.folder);
         fs.mkdirSync(groupDir, { recursive: true });
         const savedFiles: string[] = [];
-        for (const att of attachments) {
+        for (const att of attachments!) {
           if (att.data?.startsWith('data:')) {
             const base64 = att.data.split(',')[1] || '';
             const buf = Buffer.from(base64, 'base64');
@@ -505,6 +504,7 @@ async function handleApi(
           groupFolder: group.folder,
           chatJid: 'dashboard',
           isMain: false,
+          agentType,
         },
         () => { /* noop — no GroupQueue tracking needed for dashboard */ },
         async (output) => {
@@ -516,7 +516,7 @@ async function handleApi(
           if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
             logTokenUsage({
               group_folder: group.folder,
-              agent_type: 'claude',
+              agent_type: agentType,
               input_tokens: output.usage.input_tokens,
               output_tokens: output.usage.output_tokens,
               cache_read_tokens: output.usage.cache_read_tokens,

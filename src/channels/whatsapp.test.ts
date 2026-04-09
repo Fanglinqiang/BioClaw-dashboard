@@ -5,6 +5,9 @@ import { EventEmitter } from 'events';
 
 // Mock config
 vi.mock('../config.js', () => ({
+  ALLOW_WHATSAPP_SELF_MESSAGES: false,
+  ASSISTANT_NAME: 'Bioclaw',
+  GROUPS_DIR: '/tmp/bioclaw-test-groups',
   STORE_DIR: '/tmp/bioclaw-test-store',
 }));
 
@@ -18,11 +21,21 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
+const {
+  mockGetLastGroupSync,
+  mockSetLastGroupSync,
+  mockUpdateChatName,
+} = vi.hoisted(() => ({
+  mockGetLastGroupSync: vi.fn<() => string | null>(() => null),
+  mockSetLastGroupSync: vi.fn(),
+  mockUpdateChatName: vi.fn(),
+}));
+
 // Mock db
-vi.mock('../db.js', () => ({
-  getLastGroupSync: vi.fn(() => null),
-  setLastGroupSync: vi.fn(),
-  updateChatName: vi.fn(),
+vi.mock('../db/index.js', () => ({
+  getLastGroupSync: mockGetLastGroupSync,
+  setLastGroupSync: mockSetLastGroupSync,
+  updateChatName: mockUpdateChatName,
 }));
 
 // Mock fs
@@ -71,6 +84,7 @@ let fakeSocket: ReturnType<typeof createFakeSocket>;
 // Mock Baileys
 vi.mock('@whiskeysockets/baileys', () => {
   return {
+    downloadMediaMessage: vi.fn().mockResolvedValue(Buffer.from('image-bytes')),
     default: vi.fn(() => fakeSocket),
     Browsers: {
       macOS: vi.fn((browser: string) => ['Mac OS', browser, '14.4.1']),
@@ -87,6 +101,9 @@ vi.mock('@whiskeysockets/baileys', () => {
       restartRequired: 515,
     },
     makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
+    fetchLatestBaileysVersion: vi.fn().mockResolvedValue({
+      version: [2, 3000, 1035194821],
+    }),
     useMultiFileAuthState: vi.fn().mockResolvedValue({
       state: {
         creds: {},
@@ -97,8 +114,7 @@ vi.mock('@whiskeysockets/baileys', () => {
   };
 });
 
-import { WhatsAppChannel, WhatsAppChannelOpts } from './whatsapp.js';
-import { getLastGroupSync, updateChatName, setLastGroupSync } from '../db.js';
+import { WhatsAppChannel, WhatsAppChannelOpts } from './whatsapp/channel.js';
 
 // --- Test helpers ---
 
@@ -141,11 +157,15 @@ async function triggerMessages(messages: unknown[]) {
 describe('WhatsAppChannel', () => {
   beforeEach(() => {
     fakeSocket = createFakeSocket();
-    vi.mocked(getLastGroupSync).mockReturnValue(null);
+    mockGetLastGroupSync.mockReset();
+    mockGetLastGroupSync.mockReturnValue(null);
+    mockSetLastGroupSync.mockClear();
+    mockUpdateChatName.mockClear();
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   /**
@@ -320,6 +340,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'registered@g.us',
         expect.any(String),
+        'WhatsApp Group red@g.us',
       );
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
@@ -355,6 +376,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'unregistered@g.us',
         expect.any(String),
+        'WhatsApp Group red@g.us',
       );
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
@@ -454,7 +476,9 @@ describe('WhatsAppChannel', () => {
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'registered@g.us',
-        expect.objectContaining({ content: 'Check this photo' }),
+        expect.objectContaining({
+          content: expect.stringContaining('Check this photo'),
+        }),
       );
     });
 
@@ -579,6 +603,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         '1234567890@s.whatsapp.net',
         expect.any(String),
+        'WhatsApp DM Self',
       );
     });
 
@@ -605,6 +630,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         'registered@g.us',
         expect.any(String),
+        'WhatsApp Group red@g.us',
       );
     });
 
@@ -631,6 +657,7 @@ describe('WhatsAppChannel', () => {
       expect(opts.onChatMetadata).toHaveBeenCalledWith(
         '0000000000@lid',
         expect.any(String),
+        'WhatsApp DM Unknown',
       );
     });
   });
@@ -712,14 +739,14 @@ describe('WhatsAppChannel', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       expect(fakeSocket.groupFetchAllParticipating).toHaveBeenCalled();
-      expect(updateChatName).toHaveBeenCalledWith('group1@g.us', 'Group One');
-      expect(updateChatName).toHaveBeenCalledWith('group2@g.us', 'Group Two');
-      expect(setLastGroupSync).toHaveBeenCalled();
+      expect(mockUpdateChatName).toHaveBeenCalledWith('group1@g.us', 'Group One');
+      expect(mockUpdateChatName).toHaveBeenCalledWith('group2@g.us', 'Group Two');
+      expect(mockSetLastGroupSync).toHaveBeenCalled();
     });
 
     it('skips sync when synced recently', async () => {
       // Last sync was 1 hour ago (within 24h threshold)
-      vi.mocked(getLastGroupSync).mockReturnValue(
+      mockGetLastGroupSync.mockReturnValue(
         new Date(Date.now() - 60 * 60 * 1000).toISOString(),
       );
 
@@ -734,7 +761,7 @@ describe('WhatsAppChannel', () => {
     });
 
     it('forces sync regardless of cache', async () => {
-      vi.mocked(getLastGroupSync).mockReturnValue(
+      mockGetLastGroupSync.mockReturnValue(
         new Date(Date.now() - 60 * 60 * 1000).toISOString(),
       );
 
@@ -750,7 +777,7 @@ describe('WhatsAppChannel', () => {
       await channel.syncGroupMetadata(true);
 
       expect(fakeSocket.groupFetchAllParticipating).toHaveBeenCalled();
-      expect(updateChatName).toHaveBeenCalledWith('group@g.us', 'Forced Group');
+      expect(mockUpdateChatName).toHaveBeenCalledWith('group@g.us', 'Forced Group');
     });
 
     it('handles group sync failure gracefully', async () => {
@@ -780,12 +807,12 @@ describe('WhatsAppChannel', () => {
       await connectChannel(channel);
 
       // Clear any calls from the automatic sync on connect
-      vi.mocked(updateChatName).mockClear();
+      mockUpdateChatName.mockClear();
 
       await channel.syncGroupMetadata(true);
 
-      expect(updateChatName).toHaveBeenCalledTimes(1);
-      expect(updateChatName).toHaveBeenCalledWith('group1@g.us', 'Has Subject');
+      expect(mockUpdateChatName).toHaveBeenCalledTimes(1);
+      expect(mockUpdateChatName).toHaveBeenCalledWith('group1@g.us', 'Has Subject');
     });
   });
 

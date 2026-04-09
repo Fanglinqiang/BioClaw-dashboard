@@ -19,6 +19,7 @@ const FILES_DIR = path.join(IPC_DIR, 'files');
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.BIOCLAW_CHAT_JID!;
 const groupFolder = process.env.BIOCLAW_GROUP_FOLDER!;
+const agentId = process.env.BIOCLAW_AGENT_ID || groupFolder;
 const isMain = process.env.BIOCLAW_IS_MAIN === '1';
 
 function writeIpcFile(dir: string, data: object): string {
@@ -42,7 +43,7 @@ const server = new McpServer({
 
 server.tool(
   'send_message',
-  "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times. Note: when running as a scheduled task, your final output is NOT sent to the user — use this tool if you need to communicate with the user or group.",
+  "Send an intermediate progress update to the user while you're still running. Your final text response is shown automatically — do NOT use this for the final answer. Use this only for mid-task status updates (e.g. 'Downloaded 3/5 files, continuing...'). You can call this multiple times. Note: when running as a scheduled task, your final output is NOT sent to the user — use this tool to communicate results.",
   {
     text: z.string().describe('The message text to send'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
@@ -168,6 +169,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       context_mode: args.context_mode || 'group',
+      agentId,
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),
@@ -280,12 +282,14 @@ server.tool(
   'register_group',
   `Register a new WhatsApp group so the agent can respond to messages there. Main group only.
 
-Use available_groups.json to find the JID for a group. The folder name should be lowercase with hyphens (e.g., "family-chat").`,
+Use available_groups.json to find the JID for a group. The folder name should be lowercase with hyphens (e.g., "family-chat").
+Optionally set workspace_folder to bind multiple chats/channels to the same shared session and workspace.`,
   {
     jid: z.string().describe('The WhatsApp JID (e.g., "120363336345536173@g.us")'),
     name: z.string().describe('Display name for the group'),
     folder: z.string().describe('Folder name for group files (lowercase, hyphens, e.g., "family-chat")'),
     trigger: z.string().describe('Trigger word (e.g., "@Bio")'),
+    workspace_folder: z.string().optional().describe('Optional shared workspace folder. Defaults to folder if omitted.'),
   },
   async (args) => {
     if (!isMain) {
@@ -301,6 +305,7 @@ Use available_groups.json to find the JID for a group. The folder name should be
       name: args.name,
       folder: args.folder,
       trigger: args.trigger,
+      workspaceFolder: args.workspace_folder,
       timestamp: new Date().toISOString(),
     };
 

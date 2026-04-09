@@ -1,24 +1,30 @@
 /**
  * Container Runner for BioClaw
- * Spawns agent execution in Docker container and handles IPC
+ * High-level orchestration: input/output parsing, timeouts, lifecycle.
+ * Low-level container operations are in container-runtime.ts.
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 import {
-  CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
-  DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
 } from './config.js';
+import { recordAgentTraceEvent } from './agent-trace.js';
+import { readSecrets } from './credential-proxy.js';
+import {
+  buildVolumeMounts,
+  buildContainerArgs,
+  spawnContainer,
+  stopContainer,
+  makeContainerName,
+} from './container-runtime.js';
 import { logger } from './logger.js';
-import { validateAdditionalMounts } from './mount-security.js';
-import { getHomeDir } from './platform.js';
-import { RegisteredGroup } from './types.js';
+import { AgentRuntimeConfig, RegisteredGroup } from './types.js';
+import { getWorkspaceFolder } from './workspace.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---BIOCLAW_OUTPUT_START---';
@@ -30,10 +36,18 @@ export interface ContainerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
+  agentId?: string;
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  agentSystemPrompt?: string;
+  agentType?: string;
+  runtimeConfig?: AgentRuntimeConfig;
+  workdir?: string;
   secrets?: Record<string, string>;
+  /** True when the channel supports streaming cards (e.g. Feishu).
+   *  Causes send_message to route through text events instead of IPC files. */
+  streamingCard?: boolean;
 }
 
 export interface ContainerOutput {
@@ -63,209 +77,98 @@ export interface ContainerEvent {
   text?: string;
 }
 
-interface VolumeMount {
-  hostPath: string;
-  containerPath: string;
-  readonly: boolean;
+function truncateForUser(text: string, maxChars = 240): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
-function buildVolumeMounts(
-  group: RegisteredGroup,
-  isMain: boolean,
-): VolumeMount[] {
-  const mounts: VolumeMount[] = [];
-  const homeDir = getHomeDir();
-  const projectRoot = path.resolve(fileURLToPath(import.meta.url), '../..');
+function withSuggestions(summary: string, suggestions: string[]): string {
+  return [
+    summary,
+    '',
+    'Suggested next steps:',
+    ...suggestions.map((item, index) => `${index + 1}. ${item}`),
+  ].join('\n');
+}
 
-  if (isMain) {
-    // Main gets the entire project root mounted
-    mounts.push({
-      hostPath: projectRoot,
-      containerPath: '/workspace/project',
-      readonly: false,
-    });
+function classifyRuntimeError(stderr: string, stdout: string): string | null {
+  const combined = `${stderr}\n${stdout}`;
 
-    // Main also gets its group folder as the working directory
-    mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
-  } else {
-    // Other groups only get their own folder
-    mounts.push({
-      hostPath: path.join(GROUPS_DIR, group.folder),
-      containerPath: '/workspace/group',
-      readonly: false,
-    });
-
-    // Global memory directory (read-only for non-main)
-    // Apple Container only supports directory mounts, not file mounts
-    const globalDir = path.join(GROUPS_DIR, 'global');
-    if (fs.existsSync(globalDir)) {
-      mounts.push({
-        hostPath: globalDir,
-        containerPath: '/workspace/global',
-        readonly: true,
-      });
-    }
-  }
-
-  // Per-group Claude sessions directory (isolated from other groups)
-  // Each group gets their own .claude/ to prevent cross-group session access
-  const groupSessionsDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    '.claude',
-  );
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(settingsFile, JSON.stringify({
-      env: {
-        // Enable agent swarms (subagent orchestration)
-        // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-        // Load CLAUDE.md from additional mounted directories
-        // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-        CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-        // Enable Claude's memory feature (persists user preferences between sessions)
-        // https://code.claude.com/docs/en/memory#manage-auto-memory
-        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-      },
-    }, null, 2) + '\n');
-  }
-
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  // Use manual recursive copy to avoid ENOTSUP from xattr (docker grpcfuse ownership)
-  function copySkillDir(src: string, dst: string) {
-    fs.mkdirSync(dst, { recursive: true });
-    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-      const s = path.join(src, entry.name);
-      const d = path.join(dst, entry.name);
-      if (entry.isDirectory()) {
-        copySkillDir(s, d);
-      } else {
-        try {
-          fs.copyFileSync(s, d, fs.constants.COPYFILE_FICLONE_FORCE);
-        } catch {
-          // fallback: read+write to skip xattr issues
-          fs.writeFileSync(d, fs.readFileSync(s));
-          try { fs.chmodSync(d, fs.statSync(s).mode); } catch { /* ignore */ }
-        }
-      }
-    }
-  }
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-  const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
-      if (!fs.statSync(srcDir).isDirectory()) continue;
-      copySkillDir(srcDir, path.join(skillsDst, skillDir));
-    }
-  }
-  mounts.push({
-    hostPath: groupSessionsDir,
-    containerPath: '/home/node/.claude',
-    readonly: false,
-  });
-
-  // Per-group IPC namespace: each group gets its own IPC directory
-  // This prevents cross-group privilege escalation via IPC
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'files'), { recursive: true });
-  mounts.push({
-    hostPath: groupIpcDir,
-    containerPath: '/workspace/ipc',
-    readonly: false,
-  });
-
-  // Mount agent-runner source from host — recompiled on container startup.
-  // Bypasses Apple Container's sticky build cache for code changes.
-  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
-  mounts.push({
-    hostPath: agentRunnerSrc,
-    containerPath: '/app/src',
-    readonly: true,
-  });
-
-  // Additional mounts validated against external allowlist (tamper-proof from containers)
-  if (group.containerConfig?.additionalMounts) {
-    const validatedMounts = validateAdditionalMounts(
-      group.containerConfig.additionalMounts,
-      group.name,
-      isMain,
+  const moduleNotFound =
+    combined.match(/ModuleNotFoundError:\s+No module named ['"]([^'"]+)['"]/) ||
+    combined.match(/ImportError:\s+No module named\s+([A-Za-z0-9._-]+)/);
+  if (moduleNotFound) {
+    const pkg = moduleNotFound[1];
+    return withSuggestions(
+      `Missing Python dependency: ${pkg}. This skill likely requires an extra Python package that is not installed in the container image yet.`,
+      [
+        `If this is a one-off local test, try installing ${pkg} in a supported writable Python environment and rerun the skill.`,
+        `If this skill should be stable for everyone, add ${pkg} to the container image / dependency setup instead of relying on runtime installation.`,
+        'If you want, inspect the skill code to confirm which import triggered the failure before changing the image.',
+      ],
     );
-    mounts.push(...validatedMounts);
   }
 
-  return mounts;
+  const commandNotFound =
+    combined.match(/(?:^|\n)([A-Za-z0-9._+-]+): command not found(?:\n|$)/) ||
+    combined.match(/FileNotFoundError: \[Errno 2\] No such file or directory: ['"]([^'"]+)['"]/) ||
+    combined.match(/\/bin\/sh: 1: ([A-Za-z0-9._+-]+): not found/);
+  if (commandNotFound) {
+    const tool = commandNotFound[1];
+    return withSuggestions(
+      `Missing system tool: ${tool}. This skill is trying to call a command that is not available in the current container.`,
+      [
+        `Add ${tool} to the Docker image / container build so it is available on PATH.`,
+        'Do not rely on ad-hoc runtime installation for production use of system tools unless the environment is explicitly designed for it.',
+        'If this command is optional, consider adding a fallback path inside the skill so users still get a partial answer.',
+      ],
+    );
+  }
+
+  if (/permission denied|operation not permitted|EACCES/i.test(combined)) {
+    return withSuggestions(
+      'Permission error while running this skill. The container likely does not have permission to install packages or modify protected system paths at runtime.',
+      [
+        'Do not try to fix this by repeatedly installing packages interactively inside the running container.',
+        'If this dependency is required, add it during image build instead of runtime.',
+        'If you expected runtime installation to work, check whether the command is writing to a protected system path or requires elevated privileges.',
+      ],
+    );
+  }
+
+  if (/No module named pip|pip: command not found/i.test(combined)) {
+    return withSuggestions(
+      'Package installation failed because pip is unavailable in the runtime environment.',
+      [
+        'Treat this as an environment/image issue rather than a transient skill failure.',
+        'Install pip (or the needed package set) during image build if runtime package installation is part of your workflow.',
+        'If runtime installs are not intended, update the skill instructions so the dependency requirement is explicit.',
+      ],
+    );
+  }
+
+  if (/Temporary failure in name resolution|Could not resolve host|Failed to establish a new connection|Connection timed out|Read timed out|Name or service not known/i.test(combined)) {
+    return withSuggestions(
+      'Network or external API access failed while running this skill.',
+      [
+        'Check container network access, proxy configuration, and DNS resolution.',
+        'If the skill depends on an external API or package registry, verify that service is reachable from inside the container.',
+        'If this environment is intentionally offline, the skill may need an offline fallback or pre-bundled resources.',
+      ],
+    );
+  }
+
+  return null;
 }
 
-/**
- * Read allowed secrets from .env for passing to the container via stdin.
- * Secrets are never written to disk or mounted as files.
- */
-function readSecrets(): Record<string, string> {
-  const envFile = path.join(path.resolve(fileURLToPath(import.meta.url), '../..'), '.env');
-  if (!fs.existsSync(envFile)) return {};
+function formatUserFacingContainerError(code: number | null, stderr: string, stdout: string): string {
+  const classified = classifyRuntimeError(stderr, stdout);
+  if (classified) return classified;
 
-  const allowedVars = [
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    'ANTHROPIC_API_KEY',
-    'MODEL_PROVIDER',
-    'OPENROUTER_API_KEY',
-    'OPENROUTER_BASE_URL',
-    'OPENROUTER_MODEL',
-    'OPENAI_COMPATIBLE_API_KEY',
-    'OPENAI_COMPATIBLE_BASE_URL',
-    'OPENAI_COMPATIBLE_MODEL',
-    'MINIMAX_API_KEY', 'MINIMAX_BASE_URL', 'MINIMAX_MODEL',
-    'QWEN_API_BASE', 'QWEN_AUTH_TOKEN', 'QWEN_MODEL',
-  ];
-  const secrets: Record<string, string> = {};
-  const content = fs.readFileSync(envFile, 'utf-8');
-
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    if (!allowedVars.includes(key)) continue;
-    let value = trimmed.slice(eqIdx + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (value) secrets[key] = value;
-  }
-
-  return secrets;
-}
-
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
-
-  // Docker: -v with :ro suffix for readonly
-  for (const mount of mounts) {
-    if (mount.readonly) {
-      args.push('-v', `${mount.hostPath}:${mount.containerPath}:ro`);
-    } else {
-      args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
-    }
-  }
-
-  args.push(CONTAINER_IMAGE);
-
-  return args;
+  const rawTail = truncateForUser(stderr || stdout || 'Unknown container error');
+  const codeLabel = code == null ? 'unknown' : String(code);
+  return `Container exited with code ${codeLabel}. Last error output: ${rawTail}`;
 }
 
 export async function runContainerAgent(
@@ -276,18 +179,17 @@ export async function runContainerAgent(
   onEvent?: (event: ContainerEvent) => void,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
+  const workspaceFolder = getWorkspaceFolder(group);
+  const agentId = input.agentId || workspaceFolder;
 
-  const groupDir = path.join(GROUPS_DIR, group.folder);
-  fs.mkdirSync(groupDir, { recursive: true });
-
-  const mounts = buildVolumeMounts(group, input.isMain);
-  const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `bioclaw-${safeName}-${Date.now()}`;
+  const mounts = buildVolumeMounts(group, input.isMain, agentId);
+  const containerName = makeContainerName(agentId);
   const containerArgs = buildContainerArgs(mounts, containerName);
 
   logger.debug(
     {
       group: group.name,
+      agentId,
       containerName,
       mounts: mounts.map(
         (m) =>
@@ -301,6 +203,7 @@ export async function runContainerAgent(
   logger.info(
     {
       group: group.name,
+      agentId,
       containerName,
       mountCount: mounts.length,
       isMain: input.isMain,
@@ -308,13 +211,24 @@ export async function runContainerAgent(
     'Spawning container agent',
   );
 
-  const logsDir = path.join(GROUPS_DIR, group.folder, 'logs');
+  recordAgentTraceEvent({
+    group_folder: workspaceFolder,
+    chat_jid: input.chatJid,
+    session_id: input.sessionId ?? null,
+    type: 'container_spawn',
+    payload: {
+      containerName,
+      agentId,
+      isMain: input.isMain,
+      isScheduledTask: Boolean(input.isScheduledTask),
+    },
+  });
+
+  const logsDir = path.join(GROUPS_DIR, workspaceFolder, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('docker', containerArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const container = spawnContainer(containerArgs);
 
     onProcess(container, containerName);
 
@@ -324,9 +238,29 @@ export async function runContainerAgent(
     let stderrTruncated = false;
 
     // Pass secrets via stdin (never written to disk or mounted as files)
-    input.secrets = readSecrets();
-    container.stdin.write(JSON.stringify(input));
-    container.stdin.end();
+    const effectiveSecrets = {
+      ...readSecrets(),
+    };
+    if (input.runtimeConfig?.provider) {
+      effectiveSecrets.MODEL_PROVIDER = input.runtimeConfig.provider;
+    }
+    if (input.runtimeConfig?.model) {
+      if (input.runtimeConfig.provider === 'openai-compatible') {
+        effectiveSecrets.OPENAI_COMPATIBLE_MODEL = input.runtimeConfig.model;
+      } else {
+        effectiveSecrets.OPENROUTER_MODEL = input.runtimeConfig.model;
+      }
+    }
+    if (input.runtimeConfig?.baseUrl) {
+      if (input.runtimeConfig.provider === 'openai-compatible') {
+        effectiveSecrets.OPENAI_COMPATIBLE_BASE_URL = input.runtimeConfig.baseUrl;
+      } else {
+        effectiveSecrets.OPENROUTER_BASE_URL = input.runtimeConfig.baseUrl;
+      }
+    }
+    input.secrets = effectiveSecrets;
+    container.stdin!.write(JSON.stringify(input));
+    container.stdin!.end();
     // Remove secrets from input so they don't appear in logs
     delete input.secrets;
 
@@ -336,7 +270,7 @@ export async function runContainerAgent(
     let lastUsage: TokenUsageSummary | undefined;
     let outputChain = Promise.resolve();
 
-    container.stdout.on('data', (data) => {
+    container.stdout!.on('data', (data) => {
       const chunk = data.toString();
 
       // Always accumulate for logging
@@ -406,22 +340,20 @@ export async function runContainerAgent(
             }
           } catch (err) {
             logger.warn(
-              { group: group.name, error: err },
-              'Failed to parse streamed marker chunk',
+              { group: group.name, workspaceFolder, error: err },
+              'Failed to parse streamed output chunk',
             );
           }
         }
       }
     });
 
-    container.stderr.on('data', (data) => {
+    container.stderr!.on('data', (data) => {
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (line) logger.debug({ container: workspaceFolder }, line);
       }
-      // Don't reset timeout on stderr — SDK writes debug logs continuously.
-      // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
       if (stderrTruncated) return;
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
       if (chunk.length > remaining) {
@@ -439,24 +371,16 @@ export async function runContainerAgent(
     let timedOut = false;
     let hadStreamingOutput = false;
     const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-    // Grace period: hard timeout must be at least IDLE_TIMEOUT + 30s so the
-    // graceful _close sentinel has time to trigger before the hard kill fires.
     const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
 
     const killOnTimeout = () => {
       timedOut = true;
-      logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
-        if (err) {
-          logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
-          container.kill('SIGKILL');
-        }
-      });
+      logger.error({ group: group.name, workspaceFolder, containerName }, 'Container timeout, stopping gracefully');
+      stopContainer(containerName, container, 15000);
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
 
-    // Reset the timeout whenever there's activity (streaming output)
     const resetTimeout = () => {
       clearTimeout(timeout);
       timeout = setTimeout(killOnTimeout, timeoutMs);
@@ -479,9 +403,6 @@ export async function runContainerAgent(
           `Had Streaming Output: ${hadStreamingOutput}`,
         ].join('\n'));
 
-        // Timeout after output = idle cleanup, not failure.
-        // The agent already sent its response; this is just the
-        // container being reaped after the idle period expired.
         if (hadStreamingOutput) {
           logger.info(
             { group: group.name, containerName, duration, code },
@@ -499,7 +420,7 @@ export async function runContainerAgent(
         }
 
         logger.error(
-          { group: group.name, containerName, duration, code },
+          { group: group.name, workspaceFolder, containerName, duration, code },
           'Container timed out with no output',
         );
 
@@ -572,6 +493,7 @@ export async function runContainerAgent(
         logger.error(
           {
             group: group.name,
+            workspaceFolder,
             code,
             duration,
             stderr,
@@ -584,16 +506,16 @@ export async function runContainerAgent(
         resolve({
           status: 'error',
           result: null,
-          error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
+          error: formatUserFacingContainerError(code, stderr, stdout),
         });
         return;
       }
 
-      // Streaming mode: wait for output chain to settle, return completion marker
+      // Streaming mode: wait for output chain to settle
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId, usage: lastUsage },
+            { group: group.name, workspaceFolder, duration, newSessionId, usage: lastUsage },
             'Container completed (streaming mode)',
           );
           resolve({
@@ -608,7 +530,6 @@ export async function runContainerAgent(
 
       // Legacy mode: parse the last output marker pair from accumulated stdout
       try {
-        // Extract JSON between sentinel markers for robust parsing
         const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
         const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
 
@@ -618,7 +539,6 @@ export async function runContainerAgent(
             .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
             .trim();
         } else {
-          // Fallback: last non-empty line (backwards compatibility)
           const lines = stdout.trim().split('\n');
           jsonLine = lines[lines.length - 1];
         }
@@ -628,6 +548,7 @@ export async function runContainerAgent(
         logger.info(
           {
             group: group.name,
+            workspaceFolder,
             duration,
             status: output.status,
             hasResult: !!output.result,
@@ -640,6 +561,7 @@ export async function runContainerAgent(
         logger.error(
           {
             group: group.name,
+            workspaceFolder,
             stdout,
             stderr,
             error: err,
@@ -657,7 +579,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error({ group: group.name, containerName, error: err }, 'Container spawn error');
+      logger.error({ group: group.name, workspaceFolder, containerName, error: err }, 'Container spawn error');
       resolve({
         status: 'error',
         result: null,
@@ -665,68 +587,4 @@ export async function runContainerAgent(
       });
     });
   });
-}
-
-export function writeTasksSnapshot(
-  groupFolder: string,
-  isMain: boolean,
-  tasks: Array<{
-    id: string;
-    groupFolder: string;
-    prompt: string;
-    schedule_type: string;
-    schedule_value: string;
-    status: string;
-    next_run: string | null;
-  }>,
-): void {
-  // Write filtered tasks to the group's IPC directory
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
-    ? tasks
-    : tasks.filter((t) => t.groupFolder === groupFolder);
-
-  const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
-}
-
-export interface AvailableGroup {
-  jid: string;
-  name: string;
-  lastActivity: string;
-  isRegistered: boolean;
-}
-
-/**
- * Write available groups snapshot for the container to read.
- * Only main group can see all available groups (for activation).
- * Non-main groups only see their own registration status.
- */
-export function writeGroupsSnapshot(
-  groupFolder: string,
-  isMain: boolean,
-  groups: AvailableGroup[],
-  registeredJids: Set<string>,
-): void {
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all groups; others see nothing (they can't activate groups)
-  const visibleGroups = isMain ? groups : [];
-
-  const groupsFile = path.join(groupIpcDir, 'available_groups.json');
-  fs.writeFileSync(
-    groupsFile,
-    JSON.stringify(
-      {
-        groups: visibleGroups,
-        lastSync: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
 }

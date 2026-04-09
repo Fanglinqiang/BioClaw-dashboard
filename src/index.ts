@@ -1,21 +1,33 @@
-import { execSync } from 'child_process';
-import fs from 'fs';
-import path from 'path';
+/**
+ * BioClaw Orchestrator
+ * Top-level startup, shutdown, and wiring. All logic is delegated to sub-modules.
+ */
+import 'dotenv/config';
+import { randomUUID } from 'crypto';
 
 import {
   ASSISTANT_NAME,
-  DATA_DIR,
   ENABLE_LOCAL_WEB,
+  ENABLE_WECHAT,
   ENABLE_WHATSAPP,
+  FEISHU_APP_ID,
+  FEISHU_APP_SECRET,
+  FEISHU_CONNECTION_MODE,
+  FEISHU_ENCRYPT_KEY,
+  FEISHU_HOST,
+  FEISHU_PATH,
+  FEISHU_PORT,
+  FEISHU_VERIFICATION_TOKEN,
+  QQ_APP_ID,
+  QQ_CLIENT_SECRET,
+  QQ_SANDBOX,
   IDLE_TIMEOUT,
   LOCAL_WEB_GROUP_FOLDER,
   LOCAL_WEB_GROUP_JID,
   LOCAL_WEB_GROUP_NAME,
+  LOCAL_WEB_HOST,
+  LOCAL_WEB_PORT,
   MAIN_GROUP_FOLDER,
-  POLL_INTERVAL,
-  STORE_DIR,
-  TELEGRAM_BOT_TOKEN,
-  TELEGRAM_ONLY,
   TRIGGER_PATTERN,
   WECOM_BOT_ID,
   WECOM_SECRET,
@@ -26,8 +38,6 @@ import {
   WECOM_CORP_ID,
   WECOM_CORP_SECRET,
   WECOM_AGENT_ID,
-  FEISHU_APP_ID,
-  FEISHU_APP_SECRET,
   FEISHU_DEFAULT_FOLDER,
   FEISHU2_APP_ID,
   FEISHU2_APP_SECRET,
@@ -36,218 +46,389 @@ import {
   FEISHU3_APP_SECRET,
   FEISHU3_DEFAULT_FOLDER,
 } from './config.js';
-import { LocalWebChannel } from './channels/local-web.js';
-import { WhatsAppChannel } from './channels/whatsapp.js';
-import { TelegramChannel } from './channels/telegram.js';
-import { WeComChannel } from './channels/wecom.js';
-import { FeishuChannel } from './channels/feishu.js';
-import { DiscordChannel } from './channels/discord.js';
+import { recordAgentTraceEvent } from './agent-trace.js';
 import {
+  ContainerEvent,
   ContainerOutput,
   runContainerAgent,
-  writeGroupsSnapshot,
-  writeTasksSnapshot,
 } from './container-runner.js';
+import { checkRuntime, cleanupOrphans } from './container-runtime.js';
+import { writeGroupsSnapshot, writeTasksSnapshot } from './group-folder.js';
 import {
-  getAllChats,
-  getAllRegisteredGroups,
-  getAllSessions,
   getAllTasks,
+  getAllChats,
   getMessagesSince,
-  getNewMessages,
-  getRouterState,
+  getRecentMessagesForChats,
   initDatabase,
   logTokenUsage,
-  setRegisteredGroup,
-  setRouterState,
   setSession,
   storeChatMetadata,
   storeMessage,
-} from './db.js';
+} from './db/index.js';
 import { GroupQueue } from './group-queue.js';
 import { startIpcWatcher } from './ipc.js';
+import { startMessageLoop, getAvailableGroups, recoverPendingMessages } from './message-loop.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
+import {
+  loadState,
+  saveState,
+  registerGroup,
+  upsertRegisteredGroupDefinition,
+  getRegisteredGroupsMap,
+  getAgentsMap,
+  getSessions,
+  updateSession,
+  getLastAgentTimestamp,
+  setLastAgentTimestampFor,
+  getAgentIdForChat,
+  getAgentWorkspaceFolder,
+  getChatJidsForAgent,
+  getWorkspaceFolderForChat,
+  getWorkspaceFolderForAgent,
+  getChatJidsForWorkspace,
+  touchCurrentThreadForChat,
+} from './session-manager.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { startDashboard } from './dashboard.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { LocalWebChannel } from './channels/local-web/channel.js';
+import { QQChannel } from './channels/qq.js';
+import { FeishuChannel } from './channels/feishu.js';
+import { WhatsAppChannel } from './channels/whatsapp/channel.js';
+import { WeComChannel } from './channels/wecom.js';
+import { DiscordChannel } from './channels/discord.js';
+import { SlackChannel } from './channels/slack.js';
+import { WeChatChannel } from './channels/wechat.js';
+import { Channel, NewMessage, RegisteredGroup, StreamingToolCall } from './types.js';
 import { logger } from './logger.js';
+import { getRuntimeGroupForWorkspace, getWorkspaceFolder } from './workspace.js';
+import {
+  executeControlCommand,
+  getDoctorSnapshot,
+  getManagementSnapshot,
+  getStatusSnapshot,
+  ThreadSummary,
+} from './control-plane.js';
 
-// Re-export for backwards compatibility during refactor
-export { escapeXml, formatMessages } from './router.js';
+const WORKSPACE_SYNC_HEADER = '[Workspace sync from linked clients]';
 
-let lastTimestamp = '';
-let sessions: Record<string, string> = {};
-let registeredGroups: Record<string, RegisteredGroup> = {};
-let lastAgentTimestamp: Record<string, string> = {};
-let messageLoopRunning = false;
+function sanitizeLocalWebThreadTitle(title?: string): string {
+  const trimmed = (title || '').replace(/\s+/g, ' ').trim();
+  if (trimmed) return trimmed.slice(0, 80);
+  return 'New chat';
+}
 
-let whatsapp: WhatsAppChannel | undefined;
+function summarizeWorkspaceSyncContent(content: string): string {
+  const compact = content.replace(/\s+/g, ' ').trim();
+  if (compact.length <= 220) return compact;
+  return `${compact.slice(0, 217)}...`;
+}
+
+function buildWorkspaceSyncPrefix(
+  agentId: string,
+  replyChatJid: string,
+  sinceTimestamp: string,
+  registeredGroups: ReturnType<typeof getRegisteredGroupsMap>,
+): string {
+  const chatJids = getChatJidsForAgent(agentId);
+  if (chatJids.length <= 1) return '';
+
+  let syncMessages = getRecentMessagesForChats(chatJids, 200)
+    .filter((msg) => msg.chat_jid !== replyChatJid)
+    .filter((msg) => !msg.content.includes(WORKSPACE_SYNC_HEADER));
+
+  if (sinceTimestamp) {
+    syncMessages = syncMessages.filter((msg) => msg.timestamp > sinceTimestamp);
+  } else {
+    syncMessages = syncMessages.slice(-4);
+  }
+
+  if (syncMessages.length === 0) return '';
+
+  const selected = syncMessages.slice(-8);
+  const lines = selected.map((msg) => {
+    const chatName = registeredGroups[msg.chat_jid]?.name || msg.chat_jid;
+    const sender = msg.is_from_me ? ASSISTANT_NAME : (msg.sender_name || msg.sender);
+    return `- ${chatName} / ${sender}: ${summarizeWorkspaceSyncContent(msg.content)}`;
+  });
+
+  return `${WORKSPACE_SYNC_HEADER}\n${lines.join('\n')}`;
+}
+
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+let localWeb: LocalWebChannel | undefined;
 
 function channelForJid(jid: string): Channel | undefined {
   return channels.find(ch => ch.ownsJid(jid));
 }
 
+function notifyLocalWebWorkspaceUpdate(chatJid: string): void {
+  if (!localWeb) return;
+  const agentId = getAgentIdForChat(chatJid);
+  if (!agentId) return;
+  const agentChatJids = getChatJidsForAgent(agentId);
+  if (agentChatJids.some((jid) => jid.endsWith('@local.web'))) {
+    localWeb.notifyExternalUpdate(chatJid);
+  }
+}
+
 async function sendToChannel(jid: string, text: string): Promise<void> {
   const ch = channelForJid(jid);
-  if (!ch) {
-    logger.warn({ jid }, 'No channel owns this JID, cannot send');
-    return;
-  }
-  const formatted = ch.prefixAssistantName ? `${ASSISTANT_NAME}: ${text}` : text;
+  if (!ch) { logger.warn({ jid }, 'No channel owns this JID'); return; }
+  const formatted = formatOutbound(ch, text);
+  if (!formatted) return;
   await ch.sendMessage(jid, formatted);
+  if (!(ch instanceof LocalWebChannel)) {
+    const now = new Date().toISOString();
+    const group = getRegisteredGroupsMap()[jid];
+    storeChatMetadata(jid, now, group?.name);
+    storeMessage({
+      id: `${ch.name}-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      chat_jid: jid,
+      sender: 'bioclaw@system',
+      sender_name: ASSISTANT_NAME,
+      content: formatted,
+      timestamp: now,
+      is_from_me: true,
+    });
+    notifyLocalWebWorkspaceUpdate(jid);
+  }
 }
 
 async function sendImageToChannel(jid: string, imagePath: string, caption?: string): Promise<void> {
   const ch = channelForJid(jid);
-  if (!ch?.sendImage) {
-    logger.warn({ jid }, 'No channel with image support for this JID');
+  if (!ch?.sendImage) { logger.warn({ jid }, 'No channel with image support'); return; }
+  await ch.sendImage(jid, imagePath, caption);
+  if (!(ch instanceof LocalWebChannel)) {
+    const now = new Date().toISOString();
+    const group = getRegisteredGroupsMap()[jid];
+    const description = caption
+      ? `[Image sent: ${imagePath.split('/').pop() || 'image'}]\n${caption}`
+      : `[Image sent: ${imagePath.split('/').pop() || 'image'}]`;
+    storeChatMetadata(jid, now, group?.name);
+    storeMessage({
+      id: `${ch.name}-image-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      chat_jid: jid,
+      sender: 'bioclaw@system',
+      sender_name: ASSISTANT_NAME,
+      content: description,
+      timestamp: now,
+      is_from_me: true,
+    });
+    notifyLocalWebWorkspaceUpdate(jid);
+  }
+}
+
+async function sendFileToChannel(jid: string, filePath: string): Promise<void> {
+  const ch = channelForJid(jid);
+  if (!ch?.sendFile) {
+    logger.warn({ jid }, 'No channel with file support for this JID');
     return;
   }
-  await ch.sendImage(jid, imagePath, caption);
+  await ch.sendFile(jid, filePath);
 }
 
-function loadState(): void {
-  lastTimestamp = getRouterState('last_timestamp') || '';
-  const agentTs = getRouterState('last_agent_timestamp');
-  try {
-    lastAgentTimestamp = agentTs ? JSON.parse(agentTs) : {};
-  } catch {
-    logger.warn('Corrupted last_agent_timestamp in DB, resetting');
-    lastAgentTimestamp = {};
-  }
-  sessions = getAllSessions();
-  registeredGroups = getAllRegisteredGroups();
-  logger.info(
-    { groupCount: Object.keys(registeredGroups).length },
-    'State loaded',
-  );
-}
+async function processAgentMessages(agentId: string): Promise<boolean> {
+  const registeredGroups = getRegisteredGroupsMap();
+  const chatJids = getChatJidsForAgent(agentId);
+  if (chatJids.length === 0) return true;
+  const workspaceFolder = getWorkspaceFolderForAgent(agentId);
+  if (!workspaceFolder) return true;
 
-function saveState(): void {
-  setRouterState('last_timestamp', lastTimestamp);
-  setRouterState(
-    'last_agent_timestamp',
-    JSON.stringify(lastAgentTimestamp),
-  );
-}
-
-function registerGroup(jid: string, group: RegisteredGroup): void {
-  registeredGroups[jid] = group;
-  setRegisteredGroup(jid, group);
-
-  // Create group folder
-  const groupDir = path.join(DATA_DIR, '..', 'groups', group.folder);
-  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
-
-  logger.info(
-    { jid, name: group.name, folder: group.folder },
-    'Group registered',
-  );
-}
-
-/**
- * Get available groups list for the agent.
- * Returns groups ordered by most recent activity.
- */
-export function getAvailableGroups(): import('./container-runner.js').AvailableGroup[] {
-  const chats = getAllChats();
-  const registeredJids = new Set(Object.keys(registeredGroups));
-
-  return chats
-    .filter(
-      (c) =>
-        c.jid !== '__group_sync__' &&
-        (c.jid.endsWith('@g.us') ||
-          c.jid.endsWith('@local.web') ||
-          c.jid.startsWith('tg:') ||
-          c.jid.startsWith('wc') ||
-          c.jid.startsWith('fs')),
-    )
-    .map((c) => ({
-      jid: c.jid,
-      name: c.name,
-      lastActivity: c.last_message_time,
-      isRegistered: registeredJids.has(c.jid),
-    }));
-}
-
-/** @internal - exported for testing */
-export function _setRegisteredGroups(groups: Record<string, RegisteredGroup>): void {
-  registeredGroups = groups;
-}
-
-/**
- * Process all pending messages for a group.
- * Called by the GroupQueue when it's this group's turn.
- */
-async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
-  if (!group) return true;
-  const channel = findChannel(channels, chatJid);
-  if (!channel) {
-    logger.warn({ chatJid }, 'No channel found for group');
-    return true;
+  const lastAgentTimestamp = getLastAgentTimestamp();
+  const pendingByChat = new Map<string, NewMessage[]>();
+  for (const chatJid of chatJids) {
+    const pending = getMessagesSince(
+      chatJid,
+      lastAgentTimestamp[chatJid] || '',
+      ASSISTANT_NAME,
+    );
+    if (pending.length > 0) pendingByChat.set(chatJid, pending);
   }
 
-  const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
+  if (pendingByChat.size === 0) return true;
 
-  const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const missedMessages = getMessagesSince(
-    chatJid,
-    sinceTimestamp,
-    ASSISTANT_NAME,
-  );
+  const isMainWorkspace = workspaceFolder === MAIN_GROUP_FOLDER;
+  const missedMessages = Array.from(pendingByChat.entries())
+    .flatMap(([chatJid, messages]) => {
+      const chatGroup = registeredGroups[chatJid];
+      if (!chatGroup) return [];
+      if (
+        isMainWorkspace ||
+        chatGroup.requiresTrigger === false ||
+        messages.some((message) => TRIGGER_PATTERN.test(message.content.trim()))
+      ) {
+        return messages;
+      }
+      return [];
+    })
+    .sort((a, b) => (
+      a.timestamp === b.timestamp
+        ? a.id.localeCompare(b.id)
+        : a.timestamp.localeCompare(b.timestamp)
+    ));
 
   if (missedMessages.length === 0) return true;
 
-  // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
-    const hasTrigger = missedMessages.some((m) =>
-      TRIGGER_PATTERN.test(m.content.trim()),
-    );
-    if (!hasTrigger) return true;
+  const replyChatJid = missedMessages[missedMessages.length - 1].chat_jid;
+  const group = getRuntimeGroupForWorkspace(
+    registeredGroups,
+    workspaceFolder,
+    replyChatJid,
+  );
+  if (!group) return true;
+  const channel = findChannel(channels, replyChatJid);
+  if (!channel) {
+    logger.warn({ replyChatJid, workspaceFolder }, 'No channel found for workspace reply route');
+    return true;
   }
 
   const prompt = formatMessages(missedMessages);
-
-  // Advance cursor so the piping path in startMessageLoop won't re-fetch
-  // these messages. Save the old cursor so we can roll back on error.
-  const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
+  const previousCursors = new Map<string, string>();
+  for (const [chatJid, messages] of pendingByChat) {
+    const eligibleForChat = messages.filter(
+      (message) => missedMessages.some((pending) => pending.id === message.id),
+    );
+    if (eligibleForChat.length === 0) continue;
+    previousCursors.set(chatJid, lastAgentTimestamp[chatJid] || '');
+    setLastAgentTimestampFor(
+      chatJid,
+      eligibleForChat[eligibleForChat.length - 1].timestamp,
+    );
+  }
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
-    'Processing messages',
+    { group: group.name, agentId, workspaceFolder, replyChatJid, messageCount: missedMessages.length },
+    'Processing agent messages',
   );
 
-  // Track idle timer for closing stdin when agent is idle
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const workspaceSyncPrefix = replyChatJid.endsWith('@local.web')
+    ? ''
+    : buildWorkspaceSyncPrefix(
+        agentId,
+        replyChatJid,
+        previousCursors.get(replyChatJid) || '',
+        registeredGroups,
+      );
+  let pendingWorkspaceSyncPrefix = workspaceSyncPrefix;
 
+  const sessions = getSessions();
+  recordAgentTraceEvent({
+    group_folder: workspaceFolder,
+    chat_jid: replyChatJid,
+    session_id: sessions[agentId] ?? null,
+    type: 'run_start',
+    payload: {
+      messageCount: missedMessages.length,
+      promptLength: prompt.length,
+      preview: prompt.slice(0, 500),
+    },
+  });
+
+  const streamStartMs = Date.now();
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug({ group: group.name }, 'Idle timeout, closing container stdin');
-      queue.closeStdin(chatJid);
+      queue.closeStdin(agentId);
     }, IDLE_TIMEOUT);
   };
 
-  await channel.setTyping?.(chatJid, true);
+  await channel.setTyping?.(replyChatJid, true);
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  // Streaming card state (for channels that support CardKit, e.g. Feishu)
+  let streamCardId: string | null = null;
+  let streamSequence = 1; // starts at 1 because createStreamingCard's settings call consumes sequence: 1
+  let accumulatedText = '';
+  let cardCreatePending = false;
+  let cardCreatePromise: Promise<void> | null = null; // stored so finalization can await it
+  let streamCardUsed = false; // true once any streaming card was created
+  const activeToolCalls: StreamingToolCall[] = [];
+
+  const supportsStreaming = !!(channel?.createStreamingCard);
+
+  const updateCard = () => {
+    if (!streamCardId) return;
+    streamSequence++;
+    channel!.updateStreamingCard!(streamCardId, accumulatedText, streamSequence, activeToolCalls.length ? [...activeToolCalls] : undefined).catch(() => {});
+  };
+
+  // onEvent callback: create/update streaming card as text/tool events arrive
+  const onStreamEvent = supportsStreaming ? (event: ContainerEvent) => {
+    if (event.type === 'text' && event.text) {
+      accumulatedText += (accumulatedText ? '\n\n' : '') + event.text;
+      streamSequence++;
+      const seq = streamSequence;
+
+      if (!streamCardId && !cardCreatePending) {
+        cardCreatePending = true;
+        streamCardUsed = true; // set eagerly to block onOutput from sending a duplicate regular message
+        cardCreatePromise = channel!.createStreamingCard!(replyChatJid).then(cardId => {
+          cardCreatePending = false;
+          if (cardId) {
+            streamCardId = cardId;
+            channel!.updateStreamingCard!(cardId, accumulatedText, seq, activeToolCalls.length ? [...activeToolCalls] : undefined);
+            outputSentToUser = true;
+          } else {
+            streamCardUsed = false; // card creation failed, fall back to regular message
+          }
+        }).catch(err => {
+          cardCreatePending = false;
+          streamCardUsed = false; // card creation failed, fall back to regular message
+          logger.error({ err }, 'Failed to create streaming card');
+        });
+      } else if (streamCardId) {
+        channel!.updateStreamingCard!(streamCardId, accumulatedText, seq, activeToolCalls.length ? [...activeToolCalls] : undefined).catch(() => {});
+      }
+    } else if (event.type === 'tool_call' && event.id && event.tool) {
+      activeToolCalls.push({ id: event.id, tool: event.tool, status: 'running' });
+      updateCard();
+    } else if (event.type === 'tool_result' && event.id) {
+      const tc = activeToolCalls.find(t => t.id === event.id);
+      if (tc) { tc.status = 'complete'; }
+      updateCard();
+    }
+  } : undefined;
+
+  let lastResultText = '';
+  const output = await runAgent(group, agentId, prompt, replyChatJid, async (result) => {
     if (result.result) {
-      const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
+      const raw = typeof result.result === 'string'
+        ? result.result
+        : JSON.stringify(result.result);
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text && channel) {
-        const formatted = formatOutbound(channel, text);
-        if (formatted) {
-          await channel.sendMessage(chatJid, formatted);
+      if (text) {
+        lastResultText = text;
+        if (streamCardUsed) {
+          // Streaming card handles display — just track the latest result
+          outputSentToUser = true;
+        } else if (supportsStreaming && !cardCreatePending) {
+          // No streaming events were emitted (e.g. minimax/qwen) but channel supports cards —
+          // create a card now; it will be finalized after runAgent returns.
+          cardCreatePending = true;
+          streamCardUsed = true;
+          cardCreatePromise = channel!.createStreamingCard!(replyChatJid).then(cardId => {
+            cardCreatePending = false;
+            if (cardId) {
+              streamCardId = cardId;
+            } else {
+              streamCardUsed = false;
+            }
+          }).catch(err => {
+            cardCreatePending = false;
+            streamCardUsed = false;
+            logger.error({ err }, 'Failed to create streaming card in onOutput');
+          });
+          outputSentToUser = true;
+        } else {
+          const outboundText = pendingWorkspaceSyncPrefix
+            ? `${pendingWorkspaceSyncPrefix}\n\n${text}`
+            : text;
+          await sendToChannel(replyChatJid, outboundText);
+          pendingWorkspaceSyncPrefix = '';
           outputSentToUser = true;
         }
       }
@@ -257,455 +438,478 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.status === 'error') {
       hadError = true;
     }
-  });
+  }, onStreamEvent, supportsStreaming);
 
-  await channel.setTyping?.(chatJid, false);
+  // Await any pending card creation (e.g. minimax path where card is created in onOutput)
+  if (cardCreatePromise) await cardCreatePromise;
+
+  // Finalize streaming card after agent completes (all turns done)
+  if (streamCardId && channel) {
+    streamSequence++;
+    for (const tc of activeToolCalls) { if (tc.status === 'running') tc.status = 'complete'; }
+    const elapsedMs = Date.now() - streamStartMs;
+    const finalText = lastResultText || accumulatedText;
+    const formatted = formatOutbound(channel, finalText);
+    await channel.finalizeStreamingCard!(streamCardId, formatted || finalText, streamSequence, activeToolCalls.length ? [...activeToolCalls] : undefined, elapsedMs);
+    outputSentToUser = true;
+  }
+
+  await channel.setTyping?.(replyChatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
-    // the user got their response and re-processing would send duplicates.
-    if (outputSentToUser) {
-      logger.warn({ group: group.name }, 'Agent error after output was sent, skipping cursor rollback to prevent duplicates');
-      return true;
+    if (outputSentToUser) return true;
+    for (const [chatJid, previousCursor] of previousCursors) {
+      setLastAgentTimestampFor(chatJid, previousCursor);
     }
-    // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
-    logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
+    logger.warn(
+      { group: group.name, agentId, workspaceFolder },
+      'Agent error, rolled back cursor for retry',
+    );
     return false;
   }
-
   return true;
 }
 
 async function runAgent(
-  group: RegisteredGroup,
-  prompt: string,
-  chatJid: string,
+  group: import('./types.js').RegisteredGroup,
+  agentId: string,
+  prompt: string, chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  onEvent?: (event: ContainerEvent) => void,
+  streamingCard?: boolean,
 ): Promise<'success' | 'error'> {
-  const isMain = group.folder === MAIN_GROUP_FOLDER;
-  const sessionId = sessions[group.folder];
+  const workspaceFolder = getWorkspaceFolder(group);
+  const isMain = workspaceFolder === MAIN_GROUP_FOLDER;
+  const sessions = getSessions();
+  const sessionId = sessions[agentId];
+  const agent = getAgentsMap()[agentId];
 
-  // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
-  writeTasksSnapshot(
-    group.folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
-  );
+  writeTasksSnapshot(agentId, isMain, tasks.map((t) => ({
+    id: t.id, groupFolder: t.agent_id || t.group_folder, prompt: t.prompt,
+    schedule_type: t.schedule_type, schedule_value: t.schedule_value,
+    status: t.status, next_run: t.next_run,
+  })));
 
-  // Update available groups snapshot (main group only can see all groups)
   const availableGroups = getAvailableGroups();
-  writeGroupsSnapshot(
-    group.folder,
-    isMain,
-    availableGroups,
-    new Set(Object.keys(registeredGroups)),
-  );
+  const registeredGroups = getRegisteredGroupsMap();
+  writeGroupsSnapshot(agentId, isMain, availableGroups, new Set(Object.keys(registeredGroups)));
 
-  // Wrap onOutput to track session ID and log token usage from streamed results
+  // Wrap onOutput to track session ID, log token usage, and emit trace events
   const wrappedOnOutput = onOutput
-    ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
-        }
+    ? async (out: ContainerOutput) => {
+        if (out.newSessionId) updateSession(agentId, out.newSessionId);
         // Log token usage as soon as we receive it (don't wait for container exit)
-        if (output.usage && (output.usage.input_tokens > 0 || output.usage.output_tokens > 0)) {
+        if (out.usage && (out.usage.input_tokens > 0 || out.usage.output_tokens > 0)) {
           logTokenUsage({
-            group_folder: group.folder,
-            agent_type: 'claude',
-            input_tokens: output.usage.input_tokens,
-            output_tokens: output.usage.output_tokens,
-            cache_read_tokens: output.usage.cache_read_tokens,
-            cache_creation_tokens: output.usage.cache_creation_tokens,
-            cost_usd: output.usage.cost_usd,
-            duration_ms: output.usage.duration_ms,
-            num_turns: output.usage.num_turns,
+            group_folder: workspaceFolder,
+            agent_type: group.agentType ?? 'claude',
+            input_tokens: out.usage.input_tokens,
+            output_tokens: out.usage.output_tokens,
+            cache_read_tokens: out.usage.cache_read_tokens,
+            cache_creation_tokens: out.usage.cache_creation_tokens,
+            cost_usd: out.usage.cost_usd,
+            duration_ms: out.usage.duration_ms,
+            num_turns: out.usage.num_turns,
             source: 'message',
           });
         }
-        await onOutput(output);
+        const r = out.result == null ? '' : typeof out.result === 'string' ? out.result : JSON.stringify(out.result);
+        recordAgentTraceEvent({
+          group_folder: workspaceFolder, chat_jid: chatJid,
+          session_id: getSessions()[agentId] ?? null, type: 'stream_output',
+          payload: { status: out.status, resultLength: r.length, preview: r.replace(/<internal>[\s\S]*?<\/internal>/g, '').slice(0, 800), newSessionId: out.newSessionId ?? null },
+        });
+        await onOutput(out);
       }
     : undefined;
 
   try {
-    const output = await runContainerAgent(
+    const out = await runContainerAgent(
       group,
       {
         prompt,
         sessionId,
-        groupFolder: group.folder,
+        groupFolder: workspaceFolder,
+        agentId,
         chatJid,
         isMain,
+        agentSystemPrompt: agent?.systemPrompt,
+        agentType: group.agentType,
+        runtimeConfig: agent?.runtimeConfig,
+        workdir: agent?.runtimeConfig?.workdir,
+        streamingCard,
       },
-      (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
+      (proc, cn) => queue.registerProcess(agentId, proc, cn, agentId),
       wrappedOnOutput,
+      onEvent,
     );
-
-    if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
-    }
-
-    if (output.status === 'error') {
-      logger.error(
-        { group: group.name, error: output.error },
-        'Container agent error',
-      );
-      return 'error';
-    }
-
+    if (out.newSessionId) updateSession(agentId, out.newSessionId);
+    recordAgentTraceEvent({
+      group_folder: workspaceFolder, chat_jid: chatJid,
+      session_id: getSessions()[agentId] ?? null,
+      type: 'run_end', payload: { status: out.status, error: out.error ?? null },
+    });
+    if (out.status === 'error') { logger.error({ group: group.name, error: out.error }, 'Container agent error'); return 'error'; }
     return 'success';
   } catch (err) {
+    recordAgentTraceEvent({
+      group_folder: workspaceFolder, chat_jid: chatJid,
+      session_id: getSessions()[agentId] ?? null,
+      type: 'run_error', payload: { message: err instanceof Error ? err.message : String(err) },
+    });
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
   }
 }
 
-async function startMessageLoop(): Promise<void> {
-  if (messageLoopRunning) {
-    logger.debug('Message loop already running, skipping duplicate start');
+// --- Startup ---
+
+function ensureRuntimeAvailable(): void {
+  checkRuntime();
+  cleanupOrphans();
+}
+
+let whatsapp: WhatsAppChannel | undefined;
+let listLocalWebThreads: (() => ThreadSummary[]) | undefined;
+let createLocalWebThread:
+  | ((title?: string) => Promise<ThreadSummary>)
+  | undefined;
+let renameLocalWebThread:
+  | ((chatJid: string, title: string) => Promise<ThreadSummary | undefined>)
+  | undefined;
+let archiveLocalWebThread:
+  | ((chatJid: string) => Promise<{ archivedChatJid: string; nextChatJid?: string } | undefined>)
+  | undefined;
+
+const controlPlaneDeps = {
+  channels: () => channels,
+  listThreads: () => listLocalWebThreads?.() || [],
+  createThread: (title?: string) => {
+    if (!createLocalWebThread) {
+      throw new Error('Thread creation not supported');
+    }
+    return createLocalWebThread(title);
+  },
+};
+
+async function handleInboundMessage(msg: NewMessage): Promise<void> {
+  const commandResult = await executeControlCommand(
+    msg.chat_jid,
+    msg.content,
+    controlPlaneDeps,
+  );
+
+  if (commandResult.handled) {
+    touchCurrentThreadForChat(msg.chat_jid);
+    storeMessage({
+      ...msg,
+      message_type: 'control',
+    });
+    if (commandResult.dispatchPrompt) {
+      const originalTs = new Date(msg.timestamp).getTime();
+      const dispatchTimestamp = new Date(
+        Math.max(Date.now(), Number.isNaN(originalTs) ? 0 : originalTs + 1),
+      ).toISOString();
+      storeMessage({
+        ...msg,
+        id: `${msg.id}::dispatch`,
+        content: commandResult.dispatchPrompt,
+        timestamp: dispatchTimestamp,
+        message_type: 'chat',
+      });
+    }
+    notifyLocalWebWorkspaceUpdate(msg.chat_jid);
+    if (commandResult.response) {
+      await sendToChannel(msg.chat_jid, commandResult.response);
+    }
     return;
   }
-  messageLoopRunning = true;
 
-  logger.info(`BioClaw running (trigger: @${ASSISTANT_NAME})`);
-
-  while (true) {
-    try {
-      const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(
-        jids,
-        lastTimestamp,
-        ASSISTANT_NAME,
-      );
-
-      if (messages.length > 0) {
-        logger.info({ count: messages.length }, 'New messages');
-
-        // Advance the "seen" cursor for all messages immediately
-        lastTimestamp = newTimestamp;
-        saveState();
-
-        // Deduplicate by group
-        const messagesByGroup = new Map<string, NewMessage[]>();
-        for (const msg of messages) {
-          const existing = messagesByGroup.get(msg.chat_jid);
-          if (existing) {
-            existing.push(msg);
-          } else {
-            messagesByGroup.set(msg.chat_jid, [msg]);
-          }
-        }
-
-        for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
-          if (!group) continue;
-
-          const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
-          const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
-
-          // For non-main groups, only act on trigger messages.
-          // Non-trigger messages accumulate in DB and get pulled as
-          // context when a trigger eventually arrives.
-          if (needsTrigger) {
-            const hasTrigger = groupMessages.some((m) =>
-              TRIGGER_PATTERN.test(m.content.trim()),
-            );
-            if (!hasTrigger) continue;
-          }
-
-          // Pull all messages since lastAgentTimestamp so non-trigger
-          // context that accumulated between triggers is included.
-          const allPending = getMessagesSince(
-            chatJid,
-            lastAgentTimestamp[chatJid] || '',
-            ASSISTANT_NAME,
-          );
-          const messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend);
-
-          if (queue.sendMessage(chatJid, formatted)) {
-            logger.debug(
-              { chatJid, count: messagesToSend.length },
-              'Piped messages to active container',
-            );
-            lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
-            saveState();
-          } else {
-            // No active container — enqueue for a new one
-            queue.enqueueMessageCheck(chatJid);
-          }
-        }
-      }
-    } catch (err) {
-      logger.error({ err }, 'Error in message loop');
-    }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
-  }
-}
-
-/**
- * Startup recovery: check for unprocessed messages in registered groups.
- * Handles crash between advancing lastTimestamp and processing messages.
- */
-function recoverPendingMessages(): void {
-  for (const [chatJid, group] of Object.entries(registeredGroups)) {
-    const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-    const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
-    if (pending.length > 0) {
-      logger.info(
-        { group: group.name, pendingCount: pending.length },
-        'Recovery: found unprocessed messages',
-      );
-      queue.enqueueMessageCheck(chatJid);
-    }
-  }
-}
-
-function ensureDockerRunning(): void {
-  try {
-    execSync('docker info', { stdio: 'pipe', timeout: 10000 });
-    logger.debug('Docker daemon is running');
-  } catch {
-    logger.error('Docker daemon is not running');
-    console.error('\n╔════════════════════════════════════════════════════════════════╗');
-    console.error('║  FATAL: Docker is not running                                  ║');
-    console.error('║                                                                ║');
-    console.error('║  Agents cannot run without Docker. To fix:                     ║');
-    console.error('║  macOS: Start Docker Desktop                                   ║');
-    console.error('║  Linux: sudo systemctl start docker                            ║');
-    console.error('║  Windows: Start Docker Desktop (prefer WSL2 backend)           ║');
-    console.error('║                                                                ║');
-    console.error('║  Install from: https://docker.com/products/docker-desktop      ║');
-    console.error('╚════════════════════════════════════════════════════════════════╝\n');
-    throw new Error('Docker is required but not running');
-  }
-
-  // Kill and clean up orphaned BioClaw containers from previous runs
-  try {
-    const output = execSync('docker ps --filter "name=bioclaw-" --format "{{.Names}}"', {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      encoding: 'utf-8',
-    });
-    const orphans = output.trim().split('\n').filter(Boolean);
-    for (const name of orphans) {
-      try {
-        execSync(`docker stop ${name}`, { stdio: 'pipe' });
-      } catch { /* already stopped */ }
-    }
-    if (orphans.length > 0) {
-      logger.info({ count: orphans.length, names: orphans }, 'Stopped orphaned containers');
-    }
-  } catch (err) {
-    logger.warn({ err }, 'Failed to clean up orphaned containers');
-  }
+  touchCurrentThreadForChat(msg.chat_jid);
+  storeMessage(msg);
+  notifyLocalWebWorkspaceUpdate(msg.chat_jid);
 }
 
 async function main(): Promise<void> {
-  ensureDockerRunning();
+  ensureRuntimeAvailable();
   initDatabase();
   logger.info('Database initialized');
   loadState();
 
-  // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
-    await Promise.all(channels.map((channel) => channel.disconnect()));
+    await Promise.all(channels.map((ch) => ch.disconnect()));
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  const channelOpts = {
-    onMessage: (_chatJid: string, msg: NewMessage) => storeMessage(msg),
-    onChatMetadata: (chatJid: string, timestamp: string, name?: string) =>
-      storeChatMetadata(chatJid, timestamp, name),
-    registeredGroups: () => registeredGroups,
+  const channelCallbacks = {
+    onMessage: (_chatJid: string, msg: NewMessage) => {
+      void handleInboundMessage(msg).catch((err) => {
+        logger.error({ err, chatJid: msg.chat_jid }, 'Failed to handle inbound message');
+      });
+    },
+    onChatMetadata: (chatJid: string, timestamp: string, name?: string) => {
+      storeChatMetadata(chatJid, timestamp, name);
+      notifyLocalWebWorkspaceUpdate(chatJid);
+    },
+    registeredGroups: () => getRegisteredGroupsMap(),
+    autoRegister: (jid: string, name: string, channelName: string) => {
+      if (getRegisteredGroupsMap()[jid]) return;
+      const folder = `${channelName}-${jid.split('@')[0].slice(-8)}`;
+      registerGroup(jid, { name, folder, trigger: TRIGGER_PATTERN.source, added_at: new Date().toISOString(), requiresTrigger: false });
+    },
   };
 
-  // Create and connect channels
-  // WhatsApp: only attempt if not TELEGRAM_ONLY and auth credentials exist
-  if (!TELEGRAM_ONLY) {
-    const authCredsPath = path.join(STORE_DIR, 'auth', 'creds.json');
-    if (fs.existsSync(authCredsPath)) {
-      whatsapp = new WhatsAppChannel({
-        onMessage: channelOpts.onMessage,
-        onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
-        registeredGroups: () => registeredGroups,
-      });
-      try {
-        channels.push(whatsapp);
-        await whatsapp.connect();
-      } catch (err) {
-        channels.splice(channels.indexOf(whatsapp), 1);
-        logger.warn({ err }, 'WhatsApp connection failed — run /setup to re-authenticate.');
-      }
-    } else {
-      logger.info('WhatsApp auth not found, skipping. Use /setup to configure.');
-    }
-  }
+  // --- Channels ---
 
-  if (TELEGRAM_BOT_TOKEN) {
-    const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
-    channels.push(telegram);
-    await telegram.connect();
-  }
-
-  if (WECOM_BOT_ID && WECOM_SECRET) {
-    const wecom = new WeComChannel(WECOM_BOT_ID, WECOM_SECRET, { ...channelOpts, corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
-    channels.push(wecom);
-    await wecom.connect();
-  }
-
-  if (WECOM2_BOT_ID && WECOM2_SECRET) {
-    const wecom2 = new WeComChannel(WECOM2_BOT_ID, WECOM2_SECRET, { ...channelOpts, jidPrefix: 'wc2:', corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
-    channels.push(wecom2);
-    await wecom2.connect();
-  }
-
-  if (WECOM3_BOT_ID && WECOM3_SECRET) {
-    const wecom3 = new WeComChannel(WECOM3_BOT_ID, WECOM3_SECRET, { ...channelOpts, jidPrefix: 'wc3:', corpId: WECOM_CORP_ID, corpSecret: WECOM_CORP_SECRET, agentId: WECOM_AGENT_ID });
-    channels.push(wecom3);
-    await wecom3.connect();
-  }
-
-  if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
-    const feishu = new FeishuChannel(FEISHU_APP_ID, FEISHU_APP_SECRET, {
-      ...channelOpts,
-      defaultFolder: FEISHU_DEFAULT_FOLDER || undefined,
-      onRegisterGroup: FEISHU_DEFAULT_FOLDER ? registerGroup : undefined,
-    });
-    channels.push(feishu);
-    await feishu.connect();
-  }
-
-  if (FEISHU2_APP_ID && FEISHU2_APP_SECRET) {
-    const feishu2 = new FeishuChannel(FEISHU2_APP_ID, FEISHU2_APP_SECRET, {
-      ...channelOpts,
-      jidPrefix: 'fs2:',
-      defaultFolder: FEISHU2_DEFAULT_FOLDER || undefined,
-      onRegisterGroup: FEISHU2_DEFAULT_FOLDER ? registerGroup : undefined,
-    });
-    channels.push(feishu2);
-    await feishu2.connect();
-  }
-
-  if (FEISHU3_APP_ID && FEISHU3_APP_SECRET) {
-    const feishu3 = new FeishuChannel(FEISHU3_APP_ID, FEISHU3_APP_SECRET, {
-      ...channelOpts,
-      jidPrefix: 'fs3:',
-      defaultFolder: FEISHU3_DEFAULT_FOLDER || undefined,
-      onRegisterGroup: FEISHU3_DEFAULT_FOLDER ? registerGroup : undefined,
-    });
-    channels.push(feishu3);
-    await feishu3.connect();
-  }
-
-  // LocalWeb channel (upstream addition — optional, only if ENABLE_LOCAL_WEB is set)
   if (ENABLE_LOCAL_WEB) {
-    if (!registeredGroups[LOCAL_WEB_GROUP_JID]) {
-      const folderConflict = Object.entries(registeredGroups).find(
-        ([jid, group]) =>
-          jid !== LOCAL_WEB_GROUP_JID && group.folder === LOCAL_WEB_GROUP_FOLDER,
-      );
-      if (folderConflict) {
-        logger.warn(
-          {
-            localWebJid: LOCAL_WEB_GROUP_JID,
-            folder: LOCAL_WEB_GROUP_FOLDER,
-            conflictJid: folderConflict[0],
-          },
-          'Skipping local web auto-registration because folder is already in use',
-        );
-      } else {
-        registerGroup(LOCAL_WEB_GROUP_JID, {
-          name: LOCAL_WEB_GROUP_NAME,
-          folder: LOCAL_WEB_GROUP_FOLDER,
-          trigger: `@${ASSISTANT_NAME}`,
-          added_at: new Date().toISOString(),
-          requiresTrigger: false,
-        });
+    const rg = getRegisteredGroupsMap();
+    if (!rg[LOCAL_WEB_GROUP_JID]) {
+      const conflict = Object.entries(rg).find(([jid, g]) => jid !== LOCAL_WEB_GROUP_JID && g.folder === LOCAL_WEB_GROUP_FOLDER);
+      if (!conflict) {
+        registerGroup(LOCAL_WEB_GROUP_JID, { name: LOCAL_WEB_GROUP_NAME, folder: LOCAL_WEB_GROUP_FOLDER, trigger: `@${ASSISTANT_NAME}`, added_at: new Date().toISOString(), requiresTrigger: false });
       }
     }
 
-    const localWeb = new LocalWebChannel({
-      onMessage: (_chatJid, msg) => storeMessage(msg),
-      onChatMetadata: (chatJid, timestamp, name) =>
-        storeChatMetadata(chatJid, timestamp, name),
+    listLocalWebThreads = () => {
+      const chatInfoByJid = Object.fromEntries(
+        getAllChats().map((chat) => [chat.jid, chat]),
+      );
+
+      return Object.entries(getRegisteredGroupsMap())
+        .filter(([jid, group]) => jid.endsWith('@local.web') && !group.archived)
+        .map(([jid, group]) => {
+          const chatInfo = chatInfoByJid[jid];
+          const workspaceFolder = getWorkspaceFolderForChat(jid) || group.folder;
+          return {
+            chatJid: jid,
+            title: group.name,
+            workspaceFolder,
+            addedAt: group.added_at,
+            lastActivity: chatInfo?.last_message_time || group.added_at,
+            agentId: getAgentIdForChat(jid) || workspaceFolder,
+          };
+        })
+        .sort((a, b) => (b.lastActivity || b.addedAt).localeCompare(a.lastActivity || a.addedAt));
+    };
+
+    createLocalWebThread = async (title?: string) => {
+      const now = new Date().toISOString();
+      const token = randomUUID().replace(/-/g, '').slice(0, 12);
+      const chatJid = `thread-${token}@local.web`;
+      const folder = `thread-${token}`;
+      const threadTitle = sanitizeLocalWebThreadTitle(title);
+      registerGroup(chatJid, {
+        name: threadTitle,
+        folder,
+        workspaceFolder: folder,
+        trigger: `@${ASSISTANT_NAME}`,
+        added_at: now,
+        requiresTrigger: false,
+      });
+      storeChatMetadata(chatJid, now, threadTitle);
+      const threads = listLocalWebThreads ? listLocalWebThreads() : [];
+      return threads.find((thread) => thread.chatJid === chatJid)!;
+    };
+
+    renameLocalWebThread = async (chatJid: string, title: string) => {
+      const group = getRegisteredGroupsMap()[chatJid];
+      if (!group || group.archived) return undefined;
+      const updated = {
+        ...group,
+        name: sanitizeLocalWebThreadTitle(title),
+      };
+      upsertRegisteredGroupDefinition(chatJid, updated);
+      storeChatMetadata(chatJid, new Date().toISOString(), updated.name);
+      const threads = listLocalWebThreads ? listLocalWebThreads() : [];
+      return threads.find((thread) => thread.chatJid === chatJid);
+    };
+
+    archiveLocalWebThread = async (chatJid: string) => {
+      const threads = listLocalWebThreads ? listLocalWebThreads() : [];
+      if (threads.length <= 1) return undefined;
+      const group = getRegisteredGroupsMap()[chatJid];
+      if (!group || group.archived) return undefined;
+      upsertRegisteredGroupDefinition(chatJid, {
+        ...group,
+        archived: true,
+      });
+      const remainingThreads = listLocalWebThreads ? listLocalWebThreads() : [];
+      const nextChatJid = remainingThreads[0]?.chatJid;
+      return {
+        archivedChatJid: chatJid,
+        nextChatJid,
+      };
+    };
+
+    localWeb = new LocalWebChannel({
+      onMessage: (_jid, msg) => {
+        void handleInboundMessage(msg).catch((err) => {
+          logger.error({ err, chatJid: msg.chat_jid }, 'Failed to handle local web message');
+        });
+      },
+      onChatMetadata: (jid, ts, name) => {
+        storeChatMetadata(jid, ts, name);
+        notifyLocalWebWorkspaceUpdate(jid);
+      },
+      listThreads: listLocalWebThreads,
+      createThread: createLocalWebThread,
+      renameThread: renameLocalWebThread,
+      archiveThread: archiveLocalWebThread,
+      getStatusSnapshot: (chatJid) => getStatusSnapshot(chatJid, controlPlaneDeps),
+      getDoctorSnapshot: (chatJid) => getDoctorSnapshot(chatJid, controlPlaneDeps),
+      getManagementSnapshot: () => getManagementSnapshot(controlPlaneDeps),
+      executeCommand: (chatJid, text) =>
+        executeControlCommand(chatJid, text, controlPlaneDeps),
+      getWorkspaceFolder: (chatJid) =>
+        getWorkspaceFolderForChat(chatJid) || LOCAL_WEB_GROUP_FOLDER,
+      getWorkspaceChatJids: (chatJid) => [chatJid],
     });
     channels.push(localWeb);
     await localWeb.connect();
   }
 
-  // Discord channel (upstream addition — optional, only if token is configured)
-  const discordToken = process.env.DISCORD_BOT_TOKEN;
-  if (discordToken) {
-    const discord = new DiscordChannel({ token: discordToken, ...channelOpts });
-    channels.push(discord);
-    try {
-      await discord.connect();
-    } catch (err) {
-      logger.error({ err }, 'Discord connection failed, continuing without it');
-    }
-  } else {
-    logger.info('Discord not configured (set DISCORD_BOT_TOKEN to enable)');
+  if (QQ_APP_ID && QQ_CLIENT_SECRET) {
+    const qq = new QQChannel({
+      appId: QQ_APP_ID,
+      clientSecret: QQ_CLIENT_SECRET,
+      sandbox: QQ_SANDBOX,
+      ...channelCallbacks,
+    });
+    channels.push(qq);
+    try { await qq.connect(); } catch (err) { logger.error({ err }, 'QQ connection failed'); }
   }
 
-  // Start subsystems
+  if (FEISHU_APP_ID && FEISHU_APP_SECRET) {
+    const feishu = new FeishuChannel(FEISHU_APP_ID, FEISHU_APP_SECRET, {
+      connectionMode: FEISHU_CONNECTION_MODE === 'webhook' ? 'webhook' : 'websocket',
+      verificationToken: FEISHU_VERIFICATION_TOKEN || undefined,
+      encryptKey: FEISHU_ENCRYPT_KEY || undefined,
+      host: FEISHU_HOST,
+      port: FEISHU_PORT,
+      path: FEISHU_PATH,
+      ...channelCallbacks,
+    });
+    channels.push(feishu);
+    try { await feishu.connect(); } catch (err) { logger.error({ err }, 'Feishu connection failed'); }
+  }
+
+  if (FEISHU2_APP_ID && FEISHU2_APP_SECRET) {
+    const feishu2 = new FeishuChannel(FEISHU2_APP_ID, FEISHU2_APP_SECRET, {
+      jidPrefix: 'fs2:',
+      defaultFolder: FEISHU2_DEFAULT_FOLDER || undefined,
+      defaultAgentType: 'minimax',
+      ...channelCallbacks,
+    });
+    channels.push(feishu2);
+    try { await feishu2.connect(); } catch (err) { logger.error({ err }, 'Feishu2 connection failed'); }
+  }
+
+  if (FEISHU3_APP_ID && FEISHU3_APP_SECRET) {
+    const feishu3 = new FeishuChannel(FEISHU3_APP_ID, FEISHU3_APP_SECRET, {
+      jidPrefix: 'fs3:',
+      defaultFolder: FEISHU3_DEFAULT_FOLDER || undefined,
+      ...channelCallbacks,
+    });
+    channels.push(feishu3);
+    try { await feishu3.connect(); } catch (err) { logger.error({ err }, 'Feishu3 connection failed'); }
+  }
+
+  if (WECOM_BOT_ID && WECOM_SECRET) {
+    const wecom = new WeComChannel(WECOM_BOT_ID, WECOM_SECRET, {
+      corpId: WECOM_CORP_ID || undefined,
+      corpSecret: WECOM_CORP_SECRET || undefined,
+      agentId: WECOM_AGENT_ID || undefined,
+      ...channelCallbacks,
+    });
+    channels.push(wecom);
+    try { await wecom.connect(); } catch (err) { logger.error({ err }, 'WeCom connection failed'); }
+  }
+
+  if (WECOM2_BOT_ID && WECOM2_SECRET) {
+    const wecom2 = new WeComChannel(WECOM2_BOT_ID, WECOM2_SECRET, {
+      jidPrefix: 'wc2:',
+      corpId: WECOM_CORP_ID || undefined,
+      corpSecret: WECOM_CORP_SECRET || undefined,
+      agentId: WECOM_AGENT_ID || undefined,
+      ...channelCallbacks,
+    });
+    channels.push(wecom2);
+    try { await wecom2.connect(); } catch (err) { logger.error({ err }, 'WeCom2 connection failed'); }
+  }
+
+  if (WECOM3_BOT_ID && WECOM3_SECRET) {
+    const wecom3 = new WeComChannel(WECOM3_BOT_ID, WECOM3_SECRET, {
+      jidPrefix: 'wc3:',
+      corpId: WECOM_CORP_ID || undefined,
+      corpSecret: WECOM_CORP_SECRET || undefined,
+      agentId: WECOM_AGENT_ID || undefined,
+      ...channelCallbacks,
+    });
+    channels.push(wecom3);
+    try { await wecom3.connect(); } catch (err) { logger.error({ err }, 'WeCom3 connection failed'); }
+  }
+
+  if (ENABLE_WHATSAPP && !process.env.DISABLE_WHATSAPP) {
+    whatsapp = new WhatsAppChannel(channelCallbacks);
+    channels.push(whatsapp);
+    await whatsapp.connect();
+  }
+
+  if (ENABLE_WECHAT) {
+    const wechat = new WeChatChannel(channelCallbacks);
+    channels.push(wechat);
+    try { await wechat.connect(); } catch (err) { logger.error({ err }, 'WeChat connection failed'); }
+  }
+
+  if (process.env.DISCORD_BOT_TOKEN) {
+    const discord = new DiscordChannel({ token: process.env.DISCORD_BOT_TOKEN, ...channelCallbacks });
+    channels.push(discord);
+    try { await discord.connect(); } catch (err) { logger.error({ err }, 'Discord connection failed'); }
+  }
+
+  if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
+    const slack = new SlackChannel({ botToken: process.env.SLACK_BOT_TOKEN, appToken: process.env.SLACK_APP_TOKEN, ...channelCallbacks });
+    channels.push(slack);
+    try { await slack.connect(); } catch (err) { logger.error({ err }, 'Slack connection failed'); }
+  }
+
+  // --- Subsystems ---
+
   startSchedulerLoop({
-    registeredGroups: () => registeredGroups,
-    getSessions: () => sessions,
+    registeredGroups: () => getRegisteredGroupsMap(),
+    getSessions: () => getSessions(),
+    getAgentWorkspaceFolder,
     queue,
-    onProcess: (groupJid, proc, containerName, groupFolder) => queue.registerProcess(groupJid, proc, containerName, groupFolder),
-    sendMessage: async (jid, rawText) => {
-      const ch = findChannel(channels, jid);
-      if (!ch) return;
-      const text = formatOutbound(ch, rawText);
-      if (text) await ch.sendMessage(jid, text);
-    },
+    onProcess: (agentId, proc, cn, ipcFolder) =>
+      queue.registerProcess(agentId, proc, cn, ipcFolder),
+    sendMessage: async (jid, rawText) => sendToChannel(jid, rawText),
   });
+
   startIpcWatcher({
-    sendMessage: (jid, text) => {
-      const ch = findChannel(channels, jid);
-      if (!ch) throw new Error(`No channel for JID: ${jid}`);
-      return ch.sendMessage(jid, text);
-    },
-    sendImage: (jid, imagePath, caption) => whatsapp?.sendImage(jid, imagePath, caption) ?? Promise.resolve(),
-    registeredGroups: () => registeredGroups,
+    registeredGroups: () => getRegisteredGroupsMap(),
     registerGroup,
+    getAgentIdForChat,
+    getAgentWorkspaceFolder,
+    sendMessage: (jid, text) => sendToChannel(jid, text),
+    sendImage: (jid, imagePath, caption) => sendImageToChannel(jid, imagePath, caption),
+    sendFile: (jid, filePath) => sendFileToChannel(jid, filePath),
     syncGroupMetadata: (force) => whatsapp?.syncGroupMetadata(force) ?? Promise.resolve(),
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) => writeGroupsSnapshot(gf, im, ag, rj),
   });
-  queue.setProcessMessagesFn(processGroupMessages);
-  recoverPendingMessages();
-  startMessageLoop();
+
+  queue.setProcessMessagesFn(processAgentMessages);
+  recoverPendingMessages(queue);
+  startMessageLoop(queue);
   startDashboard();
 }
 
-// Guard: only run when executed directly, not when imported by tests
-const isDirectRun =
-  process.argv[1] &&
-  new URL(import.meta.url).pathname === new URL(`file://${process.argv[1]}`).pathname;
-
-if (isDirectRun) {
-  main().catch((err) => {
-    logger.error({ err }, 'Failed to start BioClaw');
-    process.exit(1);
-  });
-}
+const isDirectRun = process.argv[1] && new URL(import.meta.url).pathname === new URL(`file://${process.argv[1]}`).pathname;
+if (isDirectRun) { main().catch((err) => { logger.error({ err }, 'Failed to start BioClaw'); process.exit(1); }); }

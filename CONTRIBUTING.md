@@ -8,11 +8,15 @@
 
 ## Skills
 
-A [skill](https://code.claude.com/docs/en/skills) is a markdown file in `.claude/skills/` that teaches Claude Code how to transform a BioClaw installation.
+Two places, two purposes:
 
-A PR that contributes a skill should not modify any source files.
+- **`container/skills/<name>/`** — Loaded by the **chat agent** (Docker). Use for anything users should have at runtime (API guides, plot scripts, domain skills). Can include `SKILL.md` plus nested files (e.g. `bio-tools/templates/*.py`). Sync is **recursive**.
 
-Your skill should contain the **instructions** Claude follows to add the feature—not pre-built code. See `/convert-to-docker` for a good example.
+- **`.claude/skills/<name>/`** — For **Claude Code on the repo**: setup, adding channels, converting to Docker, scaffolding. Usually instructions-only; see `/convert-to-docker`.
+
+A PR that contributes a **developer** skill under `.claude/skills/` should not modify source files. Your skill should contain the **instructions** Claude follows—not pre-built app code. See `/convert-to-docker` for a good example.
+
+Runtime skills under `container/skills/` may ship markdown + assets together; those PRs may touch `container/` only or include small host changes if justified.
 
 ### Why?
 
