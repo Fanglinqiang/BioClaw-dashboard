@@ -45,6 +45,9 @@ export interface ContainerInput {
   runtimeConfig?: AgentRuntimeConfig;
   workdir?: string;
   secrets?: Record<string, string>;
+  /** True when the channel supports streaming cards (e.g. Feishu).
+   *  Causes send_message to route through text events instead of IPC files. */
+  streamingCard?: boolean;
 }
 
 export interface ContainerOutput {

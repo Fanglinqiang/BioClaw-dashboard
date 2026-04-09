@@ -40,6 +40,9 @@ interface ContainerInput {
     enabledSkills?: string[];
   };
   secrets?: Record<string, string>;
+  /** True when the host channel supports streaming cards (e.g. Feishu CardKit).
+   *  send_message will emit a text event (→ card) instead of an IPC file to avoid duplication. */
+  streamingCard?: boolean;
 }
 
 interface ContainerOutput {
@@ -1258,8 +1261,14 @@ async function executeOpenAIToolCall(
       return runBashTool(args.command, env, cwd);
     case 'send_message':
       if (!args.text) return 'Missing required argument: text';
-      queueIpcMessage(containerInput.chatJid, containerInput.groupFolder, args.text);
-      return 'Message queued for sending.';
+      if (containerInput.streamingCard) {
+        // Channel has streaming card support (e.g. Feishu): emit as text event so the card
+        // shows it inline instead of sending a duplicate regular message via IPC.
+        writeEvent({ type: 'text', text: args.text });
+      } else {
+        queueIpcMessage(containerInput.chatJid, containerInput.groupFolder, args.text);
+      }
+      return 'Message sent.';
     case 'send_image':
       if (!args.file_path) return 'Missing required argument: file_path';
       if (!fs.existsSync(args.file_path)) return `File not found: ${args.file_path}`;
@@ -1436,6 +1445,8 @@ async function runOpenAICompatibleConversation(
 
     if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
       const textResult = normalizeContent(assistantMessage.content);
+      // Emit text event so host can update streaming card (e.g. Feishu CardKit)
+      if (textResult) writeEvent({ type: 'text', text: textResult });
       const usageSummary: TokenUsageSummary | undefined = (totalInputTokens > 0 || totalOutputTokens > 0)
         ? { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 0, duration_ms: Date.now() - startMs, num_turns: toolIterations }
         : undefined;
@@ -1449,6 +1460,7 @@ async function runOpenAICompatibleConversation(
     }
 
     for (const toolCall of assistantMessage.tool_calls) {
+      writeEvent({ type: 'tool_call', id: toolCall.id, tool: toolCall.function.name, input: {} });
       const toolResult = await executeOpenAIToolCall(
         toolCall.function.name,
         toolCall.function.arguments,
@@ -1456,6 +1468,7 @@ async function runOpenAICompatibleConversation(
         env,
         cwd,
       );
+      writeEvent({ type: 'tool_result', id: toolCall.id, output: toolResult.slice(0, 3000) });
 
       messages.push({
         role: 'tool',

@@ -341,9 +341,10 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
 
   // Streaming card state (for channels that support CardKit, e.g. Feishu)
   let streamCardId: string | null = null;
-  let streamSequence = 0;
+  let streamSequence = 1; // starts at 1 because createStreamingCard's settings call consumes sequence: 1
   let accumulatedText = '';
   let cardCreatePending = false;
+  let cardCreatePromise: Promise<void> | null = null; // stored so finalization can await it
   let streamCardUsed = false; // true once any streaming card was created
   const activeToolCalls: StreamingToolCall[] = [];
 
@@ -364,16 +365,19 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
 
       if (!streamCardId && !cardCreatePending) {
         cardCreatePending = true;
-        channel!.createStreamingCard!(replyChatJid).then(cardId => {
+        streamCardUsed = true; // set eagerly to block onOutput from sending a duplicate regular message
+        cardCreatePromise = channel!.createStreamingCard!(replyChatJid).then(cardId => {
           cardCreatePending = false;
           if (cardId) {
             streamCardId = cardId;
-            streamCardUsed = true;
             channel!.updateStreamingCard!(cardId, accumulatedText, seq, activeToolCalls.length ? [...activeToolCalls] : undefined);
             outputSentToUser = true;
+          } else {
+            streamCardUsed = false; // card creation failed, fall back to regular message
           }
         }).catch(err => {
           cardCreatePending = false;
+          streamCardUsed = false; // card creation failed, fall back to regular message
           logger.error({ err }, 'Failed to create streaming card');
         });
       } else if (streamCardId) {
@@ -401,6 +405,24 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
         if (streamCardUsed) {
           // Streaming card handles display — just track the latest result
           outputSentToUser = true;
+        } else if (supportsStreaming && !cardCreatePending) {
+          // No streaming events were emitted (e.g. minimax/qwen) but channel supports cards —
+          // create a card now; it will be finalized after runAgent returns.
+          cardCreatePending = true;
+          streamCardUsed = true;
+          cardCreatePromise = channel!.createStreamingCard!(replyChatJid).then(cardId => {
+            cardCreatePending = false;
+            if (cardId) {
+              streamCardId = cardId;
+            } else {
+              streamCardUsed = false;
+            }
+          }).catch(err => {
+            cardCreatePending = false;
+            streamCardUsed = false;
+            logger.error({ err }, 'Failed to create streaming card in onOutput');
+          });
+          outputSentToUser = true;
         } else {
           const outboundText = pendingWorkspaceSyncPrefix
             ? `${pendingWorkspaceSyncPrefix}\n\n${text}`
@@ -416,7 +438,10 @@ async function processAgentMessages(agentId: string): Promise<boolean> {
     if (result.status === 'error') {
       hadError = true;
     }
-  }, onStreamEvent);
+  }, onStreamEvent, supportsStreaming);
+
+  // Await any pending card creation (e.g. minimax path where card is created in onOutput)
+  if (cardCreatePromise) await cardCreatePromise;
 
   // Finalize streaming card after agent completes (all turns done)
   if (streamCardId && channel) {
@@ -453,6 +478,7 @@ async function runAgent(
   prompt: string, chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
   onEvent?: (event: ContainerEvent) => void,
+  streamingCard?: boolean,
 ): Promise<'success' | 'error'> {
   const workspaceFolder = getWorkspaceFolder(group);
   const isMain = workspaceFolder === MAIN_GROUP_FOLDER;
@@ -514,6 +540,7 @@ async function runAgent(
         agentType: group.agentType,
         runtimeConfig: agent?.runtimeConfig,
         workdir: agent?.runtimeConfig?.workdir,
+        streamingCard,
       },
       (proc, cn) => queue.registerProcess(agentId, proc, cn, agentId),
       wrappedOnOutput,
@@ -771,6 +798,27 @@ async function main(): Promise<void> {
     });
     channels.push(feishu);
     try { await feishu.connect(); } catch (err) { logger.error({ err }, 'Feishu connection failed'); }
+  }
+
+  if (FEISHU2_APP_ID && FEISHU2_APP_SECRET) {
+    const feishu2 = new FeishuChannel(FEISHU2_APP_ID, FEISHU2_APP_SECRET, {
+      jidPrefix: 'fs2:',
+      defaultFolder: FEISHU2_DEFAULT_FOLDER || undefined,
+      defaultAgentType: 'minimax',
+      ...channelCallbacks,
+    });
+    channels.push(feishu2);
+    try { await feishu2.connect(); } catch (err) { logger.error({ err }, 'Feishu2 connection failed'); }
+  }
+
+  if (FEISHU3_APP_ID && FEISHU3_APP_SECRET) {
+    const feishu3 = new FeishuChannel(FEISHU3_APP_ID, FEISHU3_APP_SECRET, {
+      jidPrefix: 'fs3:',
+      defaultFolder: FEISHU3_DEFAULT_FOLDER || undefined,
+      ...channelCallbacks,
+    });
+    channels.push(feishu3);
+    try { await feishu3.connect(); } catch (err) { logger.error({ err }, 'Feishu3 connection failed'); }
   }
 
   if (WECOM_BOT_ID && WECOM_SECRET) {
